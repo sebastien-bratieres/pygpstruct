@@ -48,14 +48,14 @@ def prepare_from_data_grid(data_indices_train,
     import grid_libdai_inference
     import grid_pseudo_likelihood 
     if likelihood_exact:
-        log_likelihood_function = lambda log_node_pot, log_edge_pot, y, object_size_n, n_labels: grid_libdai_inference.grid_exact_likelihood(log_node_pot, log_edge_pot, y, grid_size, n_labels) # ignore object_size_n, use grid_size always
+        log_likelihood_function = lambda log_node_pot, log_edge_pot, y, object_size_n, n_labels: grid_libdai_inference.grid_likelihood(log_node_pot, log_edge_pot, y, grid_size, n_labels, method="JTREE") # ignore object_size_n, use grid_size always
     else:
         log_likelihood_function = lambda log_node_pot, log_edge_pot, y, object_size_n, n_labels: grid_pseudo_likelihood.grid_pseudo_likelihood(log_node_pot, log_edge_pot, y, grid_size, n_labels, visible_pixels=None) # ignore object_size_n, use grid_size always
 
     if inference_exact:
-        marginals_function = lambda log_node_pot, log_edge_pot, object_size_n, n_labels : grid_libdai_inference.grid_exact_marginals(log_node_pot, log_edge_pot, grid_size, n_labels) # ignore object_size_n, use grid_size always
+        marginals_function = lambda log_node_pot, log_edge_pot, object_size_n, n_labels : grid_libdai_inference.grid_marginals(log_node_pot, log_edge_pot, grid_size, n_labels, method="JTREE") # ignore object_size_n, use grid_size always
     else:
-        marginals_function = lambda log_node_pot, log_edge_pot, object_size_n, n_labels : grid_libdai_inference.grid_trwbp_marginals(log_node_pot, log_edge_pot, grid_size, n_labels) # ignore object_size_n, use grid_size always
+        marginals_function = lambda log_node_pot, log_edge_pot, object_size_n, n_labels : grid_libdai_inference.grid_marginals(log_node_pot, log_edge_pot, grid_size, n_labels, method="TRWBP") # ignore object_size_n, use grid_size always
     logger.info(locals())
     
     # order of files given by sorted filenames

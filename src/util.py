@@ -94,7 +94,7 @@ def make_figure(data_col_list, file_pattern_list, bottom=None, top=None, max_dis
     
         ax.set_xlabel('MCMC iterations')
         data_col_legend = {None: 'Matlab error rate', 
-                           4: 'per-pixel average negative log marginal',
+                           4: 'per-atom average negative log marginal',
                            3: 'error rate', 
                            2: 'scaled LL test set',
                            1: 'current error rate on training set',

@@ -2,26 +2,37 @@ import numpy as np
 import os
 import scipy.sparse
 import chain_forwards_backwards_logsumexp
-import chain_forwards_backwards_native
 import prepare_from_data
 import learn_predict
+import numba
+
+try:
+    import chain_forwards_backwards_native
+    native_implementation_found = True
+    @numba.jit # not even sure this speeds anything up. if it doesn't speed up anything, could remove this function and just define it 
+    # inline as a lambda function
+    def log_likelihood_function_native(log_node_pot, log_edge_pot, dataset_Y_n, object_size, n_labels):
+        return chain_forwards_backwards_native.log_likelihood(log_edge_pot, log_node_pot, dataset_Y_n)
+except ImportError as ie:
+    native_implementation_found = False
 
 def learn_predict_gpstruct_wrapper(
     data_indices_train=np.arange(0,10), 
     data_indices_test=np.arange(10,20),
     task='basenp',
-    data_folder=None, # if None, defaults to '/home/sb358/pygpstruct-chain/data/%s' % task 
-    result_prefix='/scratch/sb358/afac_',
+    data_folder=None,
+    result_prefix='/tmp/pygpstruct/',
     console_log=True, # log to console as well as to file ?
     n_samples=0, 
     prediction_thinning=1, # how often (in terms of MCMC iterations) to carry out prediction, ie compute f*|f and p(y*)
     hp_bin_init=0.01,
     kernel=learn_predict.kernel_linear_unary,
     random_seed=0,
-    stop_check=None
+    stop_check=None,
+    native_implementation=False
     ):
-    if (data_folder == None):
-        data_folder = '/home/sb358/pygpstruct-chain/data/%s' % task
+    if data_folder==None:
+        data_folder = './data/%s' % task
         
     n_labels = None # used as flag after if/elif chain below, to check whether a correct task was indicated
     # NB can't infer n_features_x and n_labels from a dataset, cos they need to be consistent across train/ test datasets
@@ -48,7 +59,8 @@ def learn_predict_gpstruct_wrapper(
                                 data_folder=data_folder,
                                 logger=logger,
                                 n_labels=n_labels,
-                                n_features_x=n_features_x
+                                n_features_x=n_features_x,
+                                native_implementation=native_implementation
                                 ), 
                            result_prefix=result_prefix,
                            console_log=console_log,
@@ -60,7 +72,7 @@ def learn_predict_gpstruct_wrapper(
                            stop_check=stop_check
                            )
 
-def prepare_from_data_chain(data_indices_train, data_indices_test, data_folder, logger, n_labels, n_features_x):
+def prepare_from_data_chain(data_indices_train, data_indices_test, data_folder, logger, n_labels, n_features_x, native_implementation):
     logger.debug("prepare_from_data_chain started with arguments: " + str(locals()))
     
     data_train = loadData(data_folder, n_labels, data_indices_train, n_features_x)
@@ -68,20 +80,31 @@ def prepare_from_data_chain(data_indices_train, data_indices_test, data_folder, 
 
     # pre-assigning for speed so that there's no memory assingment in the most inner loop of the likelihood computation
     max_T = np.max([data_train.object_size.max(), data_test.object_size.max()])
-    chain_forwards_backwards_native.init_kappa(max_T)
-#    log_likelihood_function_numba.log_alpha = np.empty((max_T, n_labels))
-#    log_likelihood_function_numba.log_kappa = np.empty((max_T))    
-#    log_likelihood_function_numba.temp_array_1 = np.empty((n_labels))
-#    log_likelihood_function_numba.temp_array_2 = np.empty((n_labels))
     
-    # choose between LL_numba or LL_native
-    return (
-            lambda f : prepare_from_data.ll_scaled_fun(f, data_train, log_likelihood_function_native, False),  # that's f_in_log_domain=False
-#            lambda f : prepare_from_data.ll_scaled_fun(f, data_train, log_likelihood_function_numba, True),
+    if native_implementation:
+        if native_implementation_found:
+            chain_forwards_backwards_native.init_kappa(max_T)
+            return (
+                lambda f : prepare_from_data.ll_scaled_fun(f, data_train, log_likelihood_function_native, False),  # that's f_in_log_domain=False
+                lambda f : prepare_from_data.posterior_marginals(f, data_test, marginals_function), 
+                lambda marginals : compute_error_nlm(marginals, data_test),
+                lambda f : prepare_from_data.ll_scaled_fun(f, data_test, log_likelihood_function_native, False), # that's f_in_log_domain=False
+                prepare_from_data.average_marginals, 
+                write_marginals,
+                lambda marginals_file : read_marginals(marginals_file, data_test),
+                n_labels, data_train.X, data_test.X) 
+        else:
+            raise Exception("You have set native_implementation=True, but there has been an ImportError on import chain_forwards_backwards_native, and so I can't find the native implementation.")
+    else:
+        log_likelihood_function_numba.log_alpha = np.empty((max_T, n_labels))
+        log_likelihood_function_numba.log_kappa = np.empty((max_T))    
+        log_likelihood_function_numba.temp_array_1 = np.empty((n_labels))
+        log_likelihood_function_numba.temp_array_2 = np.empty((n_labels))
+        return (
+            lambda f : prepare_from_data.ll_scaled_fun(f, data_train, log_likelihood_function_numba, True),
             lambda f : prepare_from_data.posterior_marginals(f, data_test, marginals_function), 
             lambda marginals : compute_error_nlm(marginals, data_test),
-            lambda f : prepare_from_data.ll_scaled_fun(f, data_test, log_likelihood_function_native, False), # that's f_in_log_domain=False
-#            lambda f : prepare_from_data.ll_scaled_fun(f, data_test, log_likelihood_function_numba, True), # that's f_in_log_domain=False
+            lambda f : prepare_from_data.ll_scaled_fun(f, data_test, log_likelihood_function_numba, True),
             prepare_from_data.average_marginals, 
             write_marginals,
             lambda marginals_file : read_marginals(marginals_file, data_test),
@@ -137,13 +160,6 @@ def loadData(dirName, n_labels, indexData, n_features_x):
     #f_index_max += n_labels**2 
     
     return dataset
-
-    
-    
-import numba
-@numba.jit
-def log_likelihood_function_native(log_node_pot, log_edge_pot, dataset_Y_n, object_size, n_labels):
-    return chain_forwards_backwards_native.log_likelihood(log_edge_pot, log_node_pot, dataset_Y_n)
 
 @numba.jit
 def log_likelihood_function_numba(log_node_pot, log_edge_pot, dataset_Y_n, object_size, n_labels):

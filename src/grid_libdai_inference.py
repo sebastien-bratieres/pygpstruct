@@ -6,20 +6,24 @@ import numba
 # libDAI for exact and TRW BP inference  http://staff.science.uva.nl/~jmooij1/libDAI/libDAI-0.3.1.tar.gz (must be installed on the python path)
 # pylibdai Python wrapper for libDAI by Sameh Kamis https://github.com/samehkhamis/pylibdai
 
+# NB interesting libDAI parameters list https://github.com/probml/pmtk3/blob/4582f0eed9acd65691681256f9c895769b439f81/toolbox/GraphicalModels/inference/libdai/libdaiOptions.m
+
 #@numba.jit error Numba 0.13 NotImplementedError: offset=63 opcode=69 opname=BUILD_MAP
-def grid_exact_likelihood(log_node_pot, log_edge_pot, y, grid_size, n_labels):
+def grid_likelihood(log_node_pot, log_edge_pot, y, grid_size, n_labels, method="JTREE"):
     n_rows = grid_size
     n_cols = grid_size
     node_pot = np.exp(log_node_pot)
     edge_pot = np.exp(log_edge_pot)
     
     factors = make_factors(node_pot, edge_pot, n_rows, n_cols)
-    #print(factors)
-    props = {'inference': 'SUMPROD', 'updates':'SHSH', 'verbose':0} 
-    # JTREE doesn't seem to support logdomain factors (as opposed to methods MR, BP, TRW)
-    #print("before dai.dai")
-    logz = dai.dai(factors, 'JTREE', props, with_extra_beliefs=False, with_map_state=False)[0] # ignoring q, maxdiff return values
-    #print("after dai.dai")
+    if method == 'JTREE':
+        props = {'inference': 'SUMPROD', 'verbose':0, 'updates':'SHSH'}
+        # JTREE doesn't seem to support logdomain factors (as opposed to methods MR, BP, TRW)
+    elif method == 'TRWBP':
+        props = {'inference': 'SUMPROD', 'verbose':0, 'updates': 'SEQMAX', 'tol': '1e-9', 'maxiter': '100', 'logdomain': '0'}
+    else:
+        raise Exception("inference method %s not among supported methods JTREE, TRWBP" % method)
+    logz = dai.dai(factors, method, props, with_extra_beliefs=False, with_map_state=False)[0] # ignoring q, maxdiff return values
     
     # to obtain log p(evidence), will iterate over cliques and their potential functions obtained by DAI 
     ll = - logz # potential functions are unnormalized, the normalizer is Z
@@ -51,23 +55,21 @@ def grid_exact_likelihood(log_node_pot, log_edge_pot, y, grid_size, n_labels):
                 
     return ll
 
-def grid_exact_marginals(log_node_pot, log_edge_pot, grid_size, n_labels, method_jtree=True):
+def grid_marginals(log_node_pot, log_edge_pot, grid_size, n_labels, method='JTREE'):
     n_rows = grid_size
     n_cols = grid_size
     node_pot = np.exp(log_node_pot)
     edge_pot = np.exp(log_edge_pot)
     factors = make_factors(node_pot, edge_pot, n_rows, n_cols)
-    if method_jtree:
+    if method == 'JTREE':
         props = {'inference': 'SUMPROD', 'verbose':0, 'updates':'SHSH'}
         # JTREE doesn't seem to support logdomain factors (as opposed to methods MR, BP, TRW)
-        method='JTREE'
+    elif method == 'TRWBP':
+        props = {'inference': 'SUMPROD', 'verbose':0, 'updates': 'SEQMAX', 'tol': '1e-9', 'maxiter': '100', 'logdomain': '0'}
     else:
-        props = {'inference': 'SUMPROD', 'verbose':0, 'updates': 'SEQMAX', 'tol': '1e-6', 'maxiter': '100', 'logdomain': '0'}
-        method='TRWBP'
+        raise Exception("inference method %s not among supported methods JTREE, TRWBP" % method)
 
-    #print("before dai.dai")
     qv= dai.dai(factors, method, props, with_extra_beliefs=True, with_map_state=False)[3] # ignoring the rest; full return is logz, q, maxdiff, qv, qf 
-    #print("after dai.dai")
 
     posterior_marginals = np.empty((n_rows, n_cols, n_labels))
     for member, prob in qv:
@@ -78,9 +80,6 @@ def grid_exact_marginals(log_node_pot, log_edge_pot, grid_size, n_labels, method
         posterior_marginals[row, col, :] = prob
     return posterior_marginals    # shape (row, col, label)
     
-def grid_trwbp_marginals(log_node_pot, log_edge_pot, grid_size, n_labels):
-    return grid_exact_marginals(log_node_pot, log_edge_pot, grid_size, n_labels, method_jtree=False)
-
 @numba.jit('double(double[:,:,:], double[:,:], int8, int8)')
 def make_factors(node_pot, edge_pot, n_rows, n_cols):
     factors = []

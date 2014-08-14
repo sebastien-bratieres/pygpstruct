@@ -262,7 +262,7 @@ def learn_predict_gpstruct( prepare_from_data,
                         "test set error | last f = %.5g -- " + 
                         "scaled LL test | last f = %.5g -- " + 
                         "test set error (avg over f's)= %.5g -- " +
-                        "average per pixel negative log posterior marginals = %.5g") % 
+                        "average per-atom negative log posterior marginals = %.5g") % 
                         (mcmc_step, 
                          current_ll,
                          current_error, 

@@ -14,6 +14,11 @@ def posterior_marginals(f, dataset, marginals_function):
     return pm
 
 def average_marginals(marginals_list):
+    # Python 2 support: in py2, reduce is builtin
+    try:
+        from functools import reduce
+    except ImportError:
+        pass
     number_marginals = len(marginals_list)
     if (number_marginals == 1):
         return marginals_list[0]
