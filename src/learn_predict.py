@@ -28,6 +28,10 @@ def read_randoms(n=-1, type=None, should=None, true_random_source=True):
     to intialize this function:
     read_randoms.offset=0 #DEBUG
     read_randoms.file = np.loadtxt('/tmp/sb358/ess_randoms.txt') #DEBUG
+    
+    This function was written for an easy switch between obtaining pseudo-random numbers from
+    - a PRNG
+    - a file where a sequence of such PRN is stored (to allow reusing the same random sequence between Matlab and Python, in my case)
     """
     if true_random_source:
         if type != None:

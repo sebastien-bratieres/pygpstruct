@@ -6,8 +6,8 @@ import learn_predict
 def learn_predict_gpstruct_wrapper(
     data_indices_train=np.arange(0,10), 
     data_indices_test=np.arange(10,20),
-    data_folder=None, # if None, will default to '/bigscratch/sb358/grid-exact/data/dags.size_%d' % grid_size
-    result_prefix='/scratch/sb358/grid-exact/results/results.txt',
+    data_folder=None, # if None, will default, cf below
+    result_prefix='/tmp/pygpstruct/',
     grid_size=10, 
     n_labels=2,
     n_samples=0, 
@@ -18,7 +18,7 @@ def learn_predict_gpstruct_wrapper(
     hp_bin_init=0.01
     ):
     if (data_folder == None):
-        data_folder = '/bigscratch/sb358/grid-exact/data/dags.size_%d' % grid_size
+        data_folder = './dags.size_%d' % grid_size
     learn_predict.learn_predict_gpstruct(lambda logger : 
                            prepare_from_data_grid(
                                 data_indices_train=data_indices_train, 

@@ -7,3 +7,7 @@ This code implements the GPstruct learning algorithm:
 An Ipython notebook showing how the source code works can be found [here on nbviewer.ipython.org](http://nbviewer.ipython.org/github/sebastien-bratieres/pygpstruct/blob/master/pygpstruct%20demo.ipynb).
 
 Note that this code is research code: it will evolve and backwards compatibility is not expected.
+
+Feel free to contact the authors:
+- [Sébastien Bratières](http://mlg.eng.cam.ac.uk/sebastien/): sb358 and then the at sign, then cam and also ac.uk
+- [Novi Quadrianto](http://smileclinic.alwaysdata.net/): letter n followed by dot then quadrianto and the at, and also sussex.ac.uk
