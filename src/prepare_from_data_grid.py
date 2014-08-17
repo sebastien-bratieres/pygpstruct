@@ -15,7 +15,7 @@ def learn_predict_gpstruct_wrapper(
     likelihood_exact=True,
     inference_exact=True,
     console_log=True,
-    hp_bin_init=0.01
+    lhp_update={}
     ):
     if (data_folder == None):
         data_folder = './dags.size_%d' % grid_size
@@ -34,7 +34,7 @@ def learn_predict_gpstruct_wrapper(
                            console_log=console_log,
                            n_samples=n_samples, 
                            prediction_thinning=prediction_thinning, 
-                           hp_bin_init=hp_bin_init
+                           lhp_update=lhp_update
                            )
 
 def prepare_from_data_grid(data_indices_train, 
@@ -48,9 +48,9 @@ def prepare_from_data_grid(data_indices_train,
     import grid_libdai_inference
     import grid_pseudo_likelihood 
     if likelihood_exact:
-        log_likelihood_function = lambda log_node_pot, log_edge_pot, y, object_size_n, n_labels: grid_libdai_inference.grid_likelihood(log_node_pot, log_edge_pot, y, grid_size, n_labels, method="JTREE") # ignore object_size_n, use grid_size always
+        log_likelihood_datapoint = lambda log_node_pot, log_edge_pot, y, object_size_n, n_labels: grid_libdai_inference.grid_likelihood(log_node_pot, log_edge_pot, y, grid_size, n_labels, method="JTREE") # ignore object_size_n, use grid_size always
     else:
-        log_likelihood_function = lambda log_node_pot, log_edge_pot, y, object_size_n, n_labels: grid_pseudo_likelihood.grid_pseudo_likelihood(log_node_pot, log_edge_pot, y, grid_size, n_labels, visible_pixels=None) # ignore object_size_n, use grid_size always
+        log_likelihood_datapoint = lambda log_node_pot, log_edge_pot, y, object_size_n, n_labels: grid_pseudo_likelihood.grid_pseudo_likelihood(log_node_pot, log_edge_pot, y, grid_size, n_labels, visible_pixels=None) # ignore object_size_n, use grid_size always
 
     if inference_exact:
         marginals_function = lambda log_node_pot, log_edge_pot, object_size_n, n_labels : grid_libdai_inference.grid_marginals(log_node_pot, log_edge_pot, grid_size, n_labels, method="JTREE") # ignore object_size_n, use grid_size always
@@ -74,10 +74,10 @@ def prepare_from_data_grid(data_indices_train,
     
     logger.debug("datasets were read in")
 
-    return (lambda f : prepare_from_data.ll_scaled_fun(f, data_train, log_likelihood_function, True),  # that's f_in_log_domain=True
+    return (lambda f : prepare_from_data.log_likelihood_dataset(f, data_train, log_likelihood_datapoint, True),  # that's ll_fun_wants_log_domain=True
             lambda f : prepare_from_data.posterior_marginals(f, data_test, marginals_function), 
             lambda marginals : compute_error_nlm(marginals, data_test),
-            lambda f : prepare_from_data.ll_scaled_fun(f, data_test, log_likelihood_function, True), # that's f_in_log_domain=True
+            lambda f : prepare_from_data.log_likelihood_dataset(f, data_test, log_likelihood_datapoint, True), # that's ll_fun_wants_log_domain=True
             prepare_from_data.average_marginals,  
             write_marginals,
             lambda marginals_file : read_marginals(marginals_file, data_test),
@@ -160,10 +160,4 @@ def compute_error_nlm(marginals, data_test):
             for j in range(marginals[n].shape[1]):
                 avg_nlpm_object[i,j] = -np.log(marginals_n[i,j,data_test.Y[n][i,j]])
         stats_per_object[n,1] = avg_nlpm_object.mean()
-    return stats_per_object.mean(axis=0)
-
-    
-if __name__ == "__main__":
-    prepare_from_data_grid(N_data = 10, data_folder = r"C:\Users\bratieress\Documents\PERSONAL\Google Drive\Cambridge\GPstruct\data\basenp", fold = 1)
-    print("loaded")
-    
+    return stats_per_object.mean(axis=0)    

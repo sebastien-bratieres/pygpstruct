@@ -25,7 +25,7 @@ def learn_predict_gpstruct_wrapper(
     console_log=True, # log to console as well as to file ?
     n_samples=0, 
     prediction_thinning=1, # how often (in terms of MCMC iterations) to carry out prediction, ie compute f*|f and p(y*)
-    hp_bin_init=0.01,
+    lhp_update={},
     kernel=learn_predict.kernel_linear_unary,
     random_seed=0,
     stop_check=None,
@@ -66,7 +66,7 @@ def learn_predict_gpstruct_wrapper(
                            console_log=console_log,
                            n_samples=n_samples, 
                            prediction_thinning=prediction_thinning, 
-                           hp_bin_init=hp_bin_init,
+                           lhp_update=lhp_update,
                            kernel=kernel,
                            random_seed=random_seed,
                            stop_check=stop_check
@@ -85,10 +85,10 @@ def prepare_from_data_chain(data_indices_train, data_indices_test, data_folder, 
         if native_implementation_found:
             chain_forwards_backwards_native.init_kappa(max_T)
             return (
-                lambda f : prepare_from_data.ll_scaled_fun(f, data_train, log_likelihood_function_native, False),  # that's f_in_log_domain=False
+                lambda f : prepare_from_data.log_likelihood_dataset(f, data_train, log_likelihood_function_native, False),  # that's ll_fun_wants_log_domain=False
                 lambda f : prepare_from_data.posterior_marginals(f, data_test, marginals_function), 
                 lambda marginals : compute_error_nlm(marginals, data_test),
-                lambda f : prepare_from_data.ll_scaled_fun(f, data_test, log_likelihood_function_native, False), # that's f_in_log_domain=False
+                lambda f : prepare_from_data.log_likelihood_dataset(f, data_test, log_likelihood_function_native, False), # that's ll_fun_wants_log_domain=False
                 prepare_from_data.average_marginals, 
                 write_marginals,
                 lambda marginals_file : read_marginals(marginals_file, data_test),
@@ -101,10 +101,10 @@ def prepare_from_data_chain(data_indices_train, data_indices_test, data_folder, 
         log_likelihood_function_numba.temp_array_1 = np.empty((n_labels))
         log_likelihood_function_numba.temp_array_2 = np.empty((n_labels))
         return (
-            lambda f : prepare_from_data.ll_scaled_fun(f, data_train, log_likelihood_function_numba, True),
+            lambda f : prepare_from_data.log_likelihood_dataset(f, data_train, log_likelihood_function_numba, True),
             lambda f : prepare_from_data.posterior_marginals(f, data_test, marginals_function), 
             lambda marginals : compute_error_nlm(marginals, data_test),
-            lambda f : prepare_from_data.ll_scaled_fun(f, data_test, log_likelihood_function_numba, True),
+            lambda f : prepare_from_data.log_likelihood_dataset(f, data_test, log_likelihood_function_numba, True),
             prepare_from_data.average_marginals, 
             write_marginals,
             lambda marginals_file : read_marginals(marginals_file, data_test),
@@ -140,7 +140,7 @@ def loadData(dirName, n_labels, indexData, n_features_x):
         this_y = np.loadtxt(os.path.join(dirName, str(indexData[n]+1) + '.y'), dtype=np.int8) # labels start with 0 in data files
         this_y[this_y < 0] = 0 # remove the three -1 labels found in task JapaneseNE for unknown reason
         dataset.Y.append(this_y) 
-        dataset.unaries.append(np.zeros((dataset.object_size[n], n_labels), dtype=np.int))
+        dataset.unaries.append(np.zeros((dataset.object_size[n], dataset.n_labels), dtype=np.int))
 
     assert(dataset.n_points == dataset.object_size.sum())
     # stack the ijv lists vertically, to create a complete ijv array
@@ -150,13 +150,13 @@ def loadData(dirName, n_labels, indexData, n_features_x):
 
     # .unaries has the most basic (assumes no tying) shape compatible with the linear CRF: f~(n, t, y)
     f_index_max = 0 # contains largest index in f
-    for yt in range(n_labels):
+    for yt in range(dataset.n_labels):
         for n in range(dataset.N):
             for t in range(dataset.object_size[n]):
                 dataset.unaries[n][t, yt] = f_index_max
                 f_index_max = f_index_max + 1
 
-    dataset.binaries = np.arange(f_index_max, f_index_max + n_labels**2).reshape((n_labels, n_labels), order='F')
+    dataset.binaries = np.arange(f_index_max, f_index_max + n_labels**2).reshape((dataset.n_labels, dataset.n_labels), order='F')
     #f_index_max += n_labels**2 
     
     return dataset
@@ -182,6 +182,9 @@ def log_likelihood_function_numba(log_node_pot, log_edge_pot, dataset_Y_n, objec
         return (log_pot - log_Z)
 
 def marginals_function(log_node_pot, log_edge_pot, object_size, n_labels):
+    """
+    marginals returned have shape (object_size, n_labels)
+    """
     return np.exp(chain_forwards_backwards_logsumexp.forwards_backwards_algo_log_gamma(log_edge_pot, log_node_pot, object_size, n_labels))
 
 def write_marginals(marginals_f, marginals_file):
@@ -201,6 +204,7 @@ def read_marginals(marginals_file, dataset):
 def compute_error_nlm(marginals, dataset):
     stats_per_object = np.empty((dataset.N,2)) # first col for error rate, second col for neg log marg
     for n, marginals_n in enumerate(marginals):
+        #print("marginals_n.shape: " + str(marginals_n.shape))
         ampm = np.argmax(marginals_n, axis = 1) # argmax posterior marginals
         #print("comparing %s to %s" % (str(ampm.shape), str(dataset.Y[n].shape)))
         stats_per_object[n,0] = (ampm != dataset.Y[n]).sum()

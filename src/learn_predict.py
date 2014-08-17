@@ -10,18 +10,30 @@ import numpy.testing
 import pickle
 import glob
 
+import scipy.sparse.csr
+def kernel_linear_unary(X_train, X_test, lhp, no_noise):
+    p = np.dot(X_train,X_test.T)
+    if isinstance(p, scipy.sparse.csr.csr_matrix):
+        p = p.toarray() # cos if using X_train sparse vector, p will be a csr_matrix -- incidentally in this case the resulting k_unary cannot be flattened, it will result in a (1,X) 2D matrix !
+    k_unary = np.exp(lhp["unary"]) * np.array(p, dtype=learn_predict_gpstruct.dtype)
+    if no_noise:
+        return k_unary
+    else:
+        return k_unary + (np.exp(lhp["noise"])) * np.eye(k_unary.shape[0])
+    # to build block diag matrices there's scipy.linalg.block_diag
+
 import sklearn.metrics.pairwise
-def kernel_exponential_unary(X_train, X_test, lhp, noise_param):
+def kernel_exponential_unary(X_train, X_test, lhp, no_noise):
     p = sklearn.metrics.pairwise.euclidean_distances(X_train, X_test, squared=True)
     # sames as scipy.spatial.distance.cdist(X_train,X_test, 'sqeuclidean')
     # but works with Scipy sparse and Numpy dense arrays
     # I thought it would be equal to X_train.dot(X_train.T) + X_test.dot(X_test.T) - X_train.dot(X_test.T) - X_test.dot(X_train.T))
     # but it doesnt seem to
-    k_unary = learn_predict_gpstruct.dtype(np.exp(lhp["unary"]) * np.exp( -1/np.exp(lhp["length_scale"]) * p))
-    if (noise_param == 0):
+    k_unary = learn_predict_gpstruct.dtype(np.exp(lhp["unary"]) * np.exp( (-1/np.exp(lhp["length_scale"])) * p))
+    if no_noise:
         return k_unary
     else:
-        return k_unary + (noise_param) * np.eye(k_unary.shape[0])
+        return k_unary + (np.exp(lhp["noise"])) * np.eye(k_unary.shape[0])
 
 def read_randoms(n=-1, type=None, should=None, true_random_source=True):
     """
@@ -64,10 +76,12 @@ def learn_predict_gpstruct( prepare_from_data,
                             prediction_thinning=1, 
                             hp_thinning=100000, 
                             n_f_star=0, 
-                            hp_mode=0, prior=1, hp_bin_init=0.01, noise_param=1e-4,
+                            hp_mode=0, prior=1, 
+                            lhp_update={}, # defaults are     lhp = {'unary': np.log(1), 'binary': np.log(0.01), 'length_scale': np.log(8), 'noise' : np.log(1e-4)}
                             kernel=kernel_exponential_unary,
                             random_seed=0,
-                            stop_check=None
+                            stop_check=None, 
+                            hp_debug=False
                             ):
     """
     result_prefix should end with the desired character to allow result_prefix + string constructions:
@@ -81,7 +95,8 @@ def learn_predict_gpstruct( prepare_from_data,
     # hp_mode: 0 for no hp sampling, 1 for prior whitening, 2 for surrogate
     %   data/null aux
     % prior: 1 for narrow, 2 for wide uniform prior
-    % hp_bin_init: initial value of binary hyperparameter
+    default hyperparameters:     lhp = {'unary': np.log(1), 'binary': np.log(0.01), 'length_scale': np.log(8), 'noise' : np.log(1e-4)}
+
     """
     function_args = locals() # store just args passed to function, so as to log them later on
     
@@ -125,7 +140,6 @@ def learn_predict_gpstruct( prepare_from_data,
 #    if errorThinning < prediction_thinning:
 #        logger.error("Value for errorThinning is %g, smaller than prediction_thinning, which is %g. This is illegal. Using %g instead.\n" % errorThinning, prediction_thinning, prediction_thinning)
 
-    lhp = {'unary': np.log(1), 'binary': np.log(hp_bin_init), 'length_scale': np.log(8)}
     if (stop_check == None):
         stop_check = lambda : None # equivalent to pass
     learn_predict_gpstruct.dtype=np.float32
@@ -154,7 +168,12 @@ def learn_predict_gpstruct( prepare_from_data,
     # prepare kernel matrix
     logger.debug("prepare kernel matrices")
 
-    k_unary = kernel(X_train, X_train, lhp, noise_param)
+    # override default hyperparameters with argument lhp_update
+    lhp = {'unary': np.log(1), 'binary': np.log(0.01), 'length_scale': np.log(8), 'noise' : np.log(1e-4)}
+    lhp.update(lhp_update)
+    
+    k_unary = kernel(X_train, X_train, lhp, no_noise=False)
+    #print(k_unary)
 #    read_randoms(len(k_unary.flatten(order='F')), should=k_unary.flatten(order='F'), true_random_source=False) # DEBUG
     
     k_binary = np.exp(lhp["binary"]) * np.eye(n_labels**2)
@@ -162,14 +181,15 @@ def learn_predict_gpstruct( prepare_from_data,
     lower_chol_k_unary = np.linalg.cholesky(k_unary)
     lower_chol_k_binary = np.linalg.cholesky(k_binary) # simplify, this is eye
 #    print('k*')
-    k_star_unary = kernel(X_train, X_test, lhp, noise_param=0)
+    k_star_unary = kernel(X_train, X_test, lhp, no_noise=True)
     # NB no noise for prediction
     k_star_T_k_inv_unary = hashable_compute_kStarTKInv_unary(k_unary, k_star_unary)
     
     #read_randoms(should=k_star_T_k_inv_unary.ravel(order='F'), true_random_source=False) #DEBUG
 
-    del k_unary
-    del k_binary
+    if not hp_debug:
+        del k_unary
+        del k_binary
     if (n_f_star > 0):
         pass
     #===========================================================================
@@ -188,9 +208,9 @@ def learn_predict_gpstruct( prepare_from_data,
         read_randoms.prng = saved_state_dict['prng']
         current_f = saved_state_dict['current_f']
         mcmc_step = saved_state_dict['mcmc_step']
-        current_ll = saved_state_dict['current_ll']
+        current_ll_train = saved_state_dict['current_ll_train']
         current_error = saved_state_dict['current_error']
-        scaled_ll_test = saved_state_dict['scaled_ll_test']
+        current_ll_test = saved_state_dict['current_ll_test']
         avg_error = saved_state_dict['avg_error']
         avg_nlm = saved_state_dict['avg_nlm']
         logger.info('hotstart from iteration %g, including stored random state' % mcmc_step)
@@ -200,10 +220,18 @@ def learn_predict_gpstruct( prepare_from_data,
         read_randoms.prng = np.random.RandomState(random_seed)
         # no need to initialize other variables, since they will be computed during prediction, since we are starting from iteration 0 (for which we are sure prediction will happen)
 
+    if hp_debug:
+        history_f = np.ones((n_samples, current_f.shape[0]))*4 # flag
+        history_ll = np.ones((n_samples)) * 4
+        index_sample = 0
     while not stop_check() and (mcmc_step < n_samples or n_samples == 0):
-        current_f, current_ll = ess_k_sampler.ESS(current_f, ll_train, n_labels, lower_chol_k_unary, lower_chol_k_binary, read_randoms) 
+        if hp_debug:
+            history_f[index_sample, :] = current_f
+            history_ll[index_sample] = ll_train(current_f)
+            index_sample = index_sample+1
+        current_f, current_ll_train = ess_k_sampler.ESS(current_f, ll_train, n_labels, lower_chol_k_unary, lower_chol_k_binary, read_randoms) 
         #read_randoms(should=current_f, true_random_source=False)
-        #current_ll = read_randoms(1, should=ll_train(current_f), true_random_source=False)
+        #current_ll_train = read_randoms(1, should=ll_train(current_f), true_random_source=False)
         
         # prediction : compute f*|D and p(y*|f)
         # - compute f*, then marginals p(y*|f*)
@@ -245,7 +273,7 @@ def learn_predict_gpstruct( prepare_from_data,
             # using marginals_f, compute current error and current LL test data
             current_error = compute_error_nlm(marginals_f)[0] # discard neg log marg for prediction from single f
             #read_randoms(1, should=current_error, true_random_source=False) # DEBUG
-            scaled_ll_test = ll_test(f_star_mean)
+            current_ll_test = ll_test(f_star_mean)
             #read_randoms(1, should=scaled_ll_test, true_random_source=False) # DEBUG
             
             with open(result_prefix + "marginals.bin", 'ab') as marginals_file:
@@ -258,19 +286,19 @@ def learn_predict_gpstruct( prepare_from_data,
 
             #compute        
             #    - avg_error: test set error averaged over all f*|D draws 
-            #    - ll_test: log-likelihood of very last f*|D sample
+            #    - current_ll_test: log-likelihood of very last f*|D sample
             marginals_after_burnin = all_marginals[len(all_marginals)//3:]
             (avg_error, avg_nlm) = compute_error_nlm(average_marginals(marginals_after_burnin))
             logger.info(("ESS it %g -- " +
-                        "scaled LL train = %.5g -- " +
+                        "LL train | last f = %.5g -- " +
                         "test set error | last f = %.5g -- " + 
-                        "scaled LL test | last f = %.5g -- " + 
-                        "test set error (avg over f's)= %.5g -- " +
+                        "LL test | last f = %.5g -- " + 
+                        "test set error (marginalized over f's)= %.5g -- " +
                         "average per-atom negative log posterior marginals = %.5g") % 
                         (mcmc_step, 
-                         current_ll,
+                         current_ll_train,
                          current_error, 
-                         scaled_ll_test,
+                         current_ll_test,
                          avg_error,
                          avg_nlm
                          )
@@ -279,9 +307,9 @@ def learn_predict_gpstruct( prepare_from_data,
                         
         # finally save results for this MCMC step (avg_error, avg_nlp unchanged from previous step in case no prediction occurred)
         with open(result_prefix + 'results.bin', 'ab') as results_file:
-            last_results = np.array([current_ll, 
+            last_results = np.array([current_ll_train, 
                      current_error, 
-                     scaled_ll_test,
+                     current_ll_test,
                      avg_error,
                      avg_nlm], dtype=learn_predict_gpstruct.dtype)
             last_results.tofile(results_file) # file format = row-wise array, shape #mcmc steps * 5 float32
@@ -291,30 +319,18 @@ def learn_predict_gpstruct( prepare_from_data,
             pickle.dump({'prng' : read_randoms.prng,
                          'current_f' : current_f,
                          'mcmc_step' : mcmc_step,
-                         'current_ll' : current_ll,
+                         'current_ll_train' : current_ll_train,
                          'current_error' : current_error, 
-                         'scaled_ll_test' : scaled_ll_test,
+                         'current_ll_test' : current_ll_test,
                          'avg_error' : avg_error,
                          'avg_nlm' : avg_nlm}, 
                          random_state_file)
-        
+    if hp_debug:
+        return (k_unary, k_binary, history_f, history_ll)
 # LATER
 # - separate learning (write marginals to disk) 
 #    from prediction (read, skipping burnin, applying extra thinning, and compute errors)
 # - f* vs f* MAP
-# - warm start from existing f's and marginals ? (useful when must run on time-limited jobs, like HPC or Fear (12h))
-
-import scipy.sparse.csr
-def kernel_linear_unary(X_train, X_test, lhp, noise_param):
-    p = np.dot(X_train,X_test.T)
-    if isinstance(p, scipy.sparse.csr.csr_matrix):
-        p = p.toarray() # cos if using X_train sparse vector, p will be a csr_matrix -- incidentally in this case the resulting k_unary cannot be flattened, it will result in a (1,X) 2D matrix !
-    k_unary = np.exp(lhp["unary"]) * np.array(p, dtype=learn_predict_gpstruct.dtype)
-    if (noise_param == 0):
-        return k_unary
-    else:
-        return k_unary + (noise_param) * np.eye(k_unary.shape[0])
-    # to build block diag matrices there's scipy.linalg.block_diag
 
 # cache the result of compute_kStarTKInv_unary
 # compute_kStarTKInv_unary operates on a hashable version of np.arrays (whcih are otherwise non-hashable because mutable).

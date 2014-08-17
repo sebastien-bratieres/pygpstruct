@@ -1,4 +1,17 @@
 import numpy as np
+"""
+dataset object fields:
+- N: number of objects (images, sentences) in dataset
+- n_labels: number of possible labels for each atom in an object
+- object_size[n]: how many atoms (eg pixels or words) in object n ?
+- n_points : object_size.sum(), # atoms in the entire data set
+- X: X data (might be sparse matrix) in format (N, # input features), so each row represents X features for an input atom
+- Y: list of length N
+- Y[n]: array of shape corresponding to the type of data (2D array (grid_size, grid_size) for image, 1D (object_size[n]) for sentences)
+- unaries: list of size N
+- unaries[n]: array of shape (object_size[n], n_labels) indexed by [t,y]
+- binaries: array of shape (n_labels, n_labels) to be indexed with [y_{t-1}, y_{t}], yields an index into f pointing to the binary (edge) MRF parameter corresponding to [y_{t-1}, y_{t}] (remember the edge factor parameters are all tied)
+"""
 
 def posterior_marginals(f, dataset, marginals_function):
     """
@@ -39,13 +52,13 @@ def add_marginals(x,y):
     
 import numba
 #@numba.jit           
-def ll_scaled_fun(f, dataset, log_likelihood_function, f_in_log_domain):
+def log_likelihood_dataset(f, dataset, log_likelihood_datapoint, ll_fun_wants_log_domain):
     """
     f : log-domain potentials
-    f_in_log_domain : whether or not to pass log-domain f to the log-likelihood function
+    ll_fun_wants_log_domain : whether or not the log-likelihood function needs f to be in log-domain (this is false only for the native chain LL implementation)
     """
     #print("f.dtype : %s" % f.dtype)
-    if not f_in_log_domain:
+    if not ll_fun_wants_log_domain:
         f = np.exp(f) # changing semantics of f instead of inserting if's on edge_pot=... and node_pot=...
     ll = 0
     edge_pot = f[dataset.binaries]
@@ -58,13 +71,13 @@ def ll_scaled_fun(f, dataset, log_likelihood_function, f_in_log_domain):
 #        print(log_node_pot[:5,:5,0])
         #assert(log_node_pot.shape == (dataset.object_size, dataset.object_size, dataset.n_labels))
         
-        ll += log_likelihood_function(node_pot, edge_pot, dataset.Y[n], dataset.object_size[n], dataset.n_labels) 
+        ll += log_likelihood_datapoint(node_pot, edge_pot, dataset.Y[n], dataset.object_size[n], dataset.n_labels) 
         # in grid case, object_size will be ignored
-        # potentials will be log if f_in_log_domain=True (grid), otherwise they are in linear domain (chain)
         if (ll >0):
-            print('ll now : %g' % ll)
-            print(log_node_pot.tolist())
-            print(log_edge_pot.tolist())
-            print(dataset.Y)
-            print(dataset)
-    return ll #/dataset.number_points
+            info_string = ""
+            info_string += 'll now : %g\n' % ll
+            info_string += 'node_pot.tolist(): %s\n' % node_pot.tolist()
+            info_string += 'edge_pot.tolist(): %s\n' % edge_pot.tolist()
+            info_string += 'dataset: %s\n' % str(vars(dataset))
+            raise Exception("positive log-likelihood is not allowed. More information:\n" + info_string)
+    return ll # LL should not be scaled !
