@@ -1,3 +1,38 @@
+import learn_predict
+def read_randoms(n=-1, type=None, should=None, true_random_source=True):
+    """
+    to intialize this function:
+    read_randoms.offset=0 #DEBUG
+    read_randoms.file = np.loadtxt('/tmp/sb358/ess_randoms.txt') #DEBUG
+    
+    This function was written for an easy switch between obtaining pseudo-random numbers from
+    - a PRNG
+    - a file where a sequence of such PRN is stored (to allow reusing the same random sequence between Matlab and Python, in my case)
+    """
+    global dtype
+    if true_random_source:
+        if type != None:
+            if type=='u':
+                result=read_randoms.prng.rand(n)
+            else:
+                result=read_randoms.prng.randn(n)
+        else:
+            return # type==None, but we're generating random numbers so can't check anything
+    else:
+        if (n == -1 and should != None):
+            n = len(should)
+        result = read_randoms.file[read_randoms.offset:read_randoms.offset+n]
+        if should != None:
+            #print("testing start offset : " + str(read_randoms.offset) + ", length : " + str(n))
+            try:
+                numpy.testing.assert_almost_equal(should, result)
+            except AssertionError as e:
+                raise e
+            
+        read_randoms.offset = read_randoms.offset+n
+    return learn_predict.dtype_for_arrays(result)
+
+
 import time
 def stop_check(delay = None):
     if (delay != None):

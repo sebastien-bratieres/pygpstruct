@@ -4,6 +4,7 @@ import scipy.sparse
 import chain_forwards_backwards_logsumexp
 import prepare_from_data
 import learn_predict
+import kernels
 import numba
 
 try:
@@ -26,7 +27,7 @@ def learn_predict_gpstruct_wrapper(
     n_samples=0, 
     prediction_thinning=1, # how often (in terms of MCMC iterations) to carry out prediction, ie compute f*|f and p(y*)
     lhp_update={},
-    kernel=learn_predict.kernel_linear_unary,
+    kernel=kernels.kernel_linear_unary,
     random_seed=0,
     stop_check=None,
     native_implementation=False
@@ -189,10 +190,10 @@ def marginals_function(log_node_pot, log_edge_pot, object_size, n_labels):
 
 def write_marginals(marginals_f, marginals_file):
     #print(marginals_f)
-    np.array(np.vstack(marginals_f), dtype=learn_predict.learn_predict_gpstruct.dtype).tofile(marginals_file) # can hstack cos all elements have #labels rows
+    np.array(np.vstack(marginals_f), dtype=learn_predict.dtype_for_arrays).tofile(marginals_file) # can hstack cos all elements have #labels rows
     
 def read_marginals(marginals_file, dataset):
-    result = np.fromfile(marginals_file, dtype=learn_predict.learn_predict_gpstruct.dtype)
+    result = np.fromfile(marginals_file, dtype=learn_predict.dtype_for_arrays)
     result = result.reshape((-1, dataset.n_points * dataset.n_labels))
     result = np.split(result, result.shape[0], axis=0) # make list of rows
     # each element now contains a 1D array containing all the marginals for all data points. need to turn that into a list of n elements.
