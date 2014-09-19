@@ -72,13 +72,14 @@ def log_likelihood_dataset(f, dataset, log_likelihood_datapoint, ll_fun_wants_lo
         #assert(log_node_pot.shape == (dataset.object_size, dataset.object_size, dataset.n_labels))
         
         ll_datapoint = log_likelihood_datapoint(node_pot, edge_pot, dataset.Y[n], dataset.object_size[n], dataset.n_labels) 
-        if (ll_datapoint >0):
-            info_string = ""
-            info_string += 'n: %g\n' % n
-            info_string += 'node_pot.tolist(): %s\n' % node_pot.tolist()
-            info_string += 'edge_pot.tolist(): %s\n' % edge_pot.tolist()
-            info_string += 'dataset: %s\n' % str(vars(dataset))
-            raise Exception("positive log-likelihood is not allowed. More information:\n" + info_string)
+        # if (ll_datapoint >0):
+            # info_string = ""
+            # info_string += 'log_likelihood_datapoint as computed: %g\n' % ll_datapoint
+            # info_string += 'n: %g\n' % n
+            # info_string += 'node_pot.tolist(): %s\n' % node_pot.tolist()
+            # info_string += 'edge_pot.tolist(): %s\n' % edge_pot.tolist()
+            # info_string += 'dataset.Y[n]: %s\n' % dataset.Y[n].tolist()
+            # raise Exception("positive log-likelihood is not allowed. More information:\n" + info_string)
         ll += ll_datapoint
         # in grid case, object_size will be ignored
     return ll # LL should not be scaled !
