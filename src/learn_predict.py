@@ -19,7 +19,8 @@ def learn_predict_gpstruct( prepare_from_data,
                             result_prefix=None, 
                             console_log=True,
                             n_samples=0, 
-                            prediction_thinning=1, 
+                            prediction_thinning=1,
+                            prediction_verbosity=None,
                             n_f_star=0, 
                             hp_sampling_thinning=1, 
                             hp_sampling_mode=None, 
@@ -81,7 +82,7 @@ def learn_predict_gpstruct( prepare_from_data,
     logger.addHandler(fh)
     
     # logging all input parameters cf http://stackoverflow.com/questions/2521901/get-a-list-tuple-dict-of-the-arguments-passed-to-a-function -- bottom line use locals() which is a dict of all local vars
-    logger.debug('learn_predict_gpstruct started with arguments: ' + str(function_args))
+    logger.info('learn_predict_gpstruct started with arguments: ' + str(function_args))
 
     
 #    if errorThinning < prediction_thinning:
@@ -121,6 +122,8 @@ def learn_predict_gpstruct( prepare_from_data,
     (lower_chol_k_compact, k_star_T_k_inv) = compute_kernels(lhp)
     
     logger.debug("start MCMC chain")
+    if (prediction_verbosity != None):
+        prediction_at = np.round(np.linspace(start=0, stop=n_samples-1, num=prediction_verbosity))
 
     if hotstart: # restore state from disk
         with open(result_prefix + 'state.pickle', 'rb') as random_state_file:
@@ -143,26 +146,44 @@ def learn_predict_gpstruct( prepare_from_data,
     if hp_debug:
         history_f = np.ones((n_samples, current_f.shape[0]))*4 # flag
         history_ll = np.ones((n_samples)) * 4
-        history_hp = np.ones((n_samples)) * 4
+        history_hp = np.ones((n_samples, 10)) * 4
+        
+    # ---------------- MCMC loop 
     while not stop_check() and (mcmc_step < n_samples or n_samples == 0):
         if hp_debug:
             history_f[mcmc_step, :] = current_f
             history_ll[mcmc_step] = ll_train(current_f)
-            history_hp[mcmc_step] = lhp['length_scale']
-        if np.mod(mcmc_step, hp_sampling_thinning) == 0 and not (hp_sampling_mode == None):
-            # draw new hp
-            if (hp_sampling_mode == 'prior whitening'):
-                (lhp, current_f, current_ll_train) = slice_sample_hyperparameters.hp_sample(
-                    theta = lhp, 
+            history_hp[mcmc_step, :] = lhp['variances']
+        if not (hp_sampling_mode == None) and np.mod(mcmc_step, hp_sampling_thinning) == 0 :
+            def update_lhp(lhp, variances): 
+                lhp['variances'] = variances
+                return lhp
+            if (hp_sampling_mode == 'slice sample theta'):
+                (lhp_target, current_f, current_ll_train) = slice_sample_hyperparameters.update_theta_simple(
+                    theta = lhp['variances'], 
                     ff = current_f, 
                     Lfn = ll_train, 
-                    Ufn = lambda _lhp : kernels.gram_compact(np.linalg.cholesky(kernel(X_train, X_train, _lhp, no_noise=False)), np.sqrt(np.exp(_lhp["binary"])), n_labels),
-                    read_randoms = util.read_randoms
+                    Ufn = util.memoize_once(lambda _lhp_target : kernels.gram_compact(np.linalg.cholesky(kernel(X_train, X_train, update_lhp(lhp, _lhp_target), no_noise=False)), 
+                                                                                      np.sqrt(np.exp(lhp["binary"])),
+                                                                                      n_labels)),
+                    theta_Lprior = lambda _lhp_target : np.log((np.all(_lhp_target>np.log(1e-3)) and np.all(_lhp_target<np.log(1e2)))),
                     )
+                update_lhp(lhp, lhp_target) # should be already done because particle.pos (mutable) is updated in-place
+            elif (hp_sampling_mode == 'prior whitening'):
+                (lhp_target, current_f, current_ll_train) = slice_sample_hyperparameters.update_theta_aux_chol(
+                    theta = lhp['variances'], 
+                    ff = current_f, 
+                    Lfn = ll_train, 
+                    Ufn = util.memoize_once(lambda _lhp_target : kernels.gram_compact(np.linalg.cholesky(kernel(X_train, X_train, update_lhp(lhp, _lhp_target), no_noise=False)), 
+                                                                                      np.sqrt(np.exp(lhp["binary"])),
+                                                                                      n_labels)),
+                    theta_Lprior = lambda _lhp_target : np.log((np.all(_lhp_target>np.log(1e-3)) and np.all(_lhp_target<np.log(1e2)))),
+                    )
+                update_lhp(lhp, lhp_target) # should be already done because particle.pos (mutable) is updated in-place
             else:
-                raise Exception('hyperparameter sampling mode %s not supported; should be one of "prior whitening" or None.')
+                raise Exception('hyperparameter sampling mode %s not supported; should be one of "prior whitening" or None.' % hp_sampling_mode)
             # recompute kernels and factors involving kernels
-            logger.debug('lhp update: %s' % str(lhp))
+            #logger.debug('lhp update: %s' % str(lhp))
             (lower_chol_k_compact, k_star_T_k_inv) = compute_kernels(lhp)
 
         current_f, current_ll_train = ess_k_sampler.ESS(current_f, ll_train, lower_chol_k_compact, util.read_randoms) 
@@ -174,9 +195,9 @@ def learn_predict_gpstruct( prepare_from_data,
         # - save marginals to disk
         # - read in all marginals so far
         # - discard burnin, from remaining marginals compute Bayesian averaged error rate
-        if np.mod(mcmc_step, prediction_thinning) == 0:
+        if (prediction_verbosity == None and np.mod(mcmc_step, prediction_thinning) == 0) or (prediction_verbosity != None and mcmc_step in prediction_at):
 
-#            logger.debug("start prediction")
+            #logger.debug("start prediction it %g" % mcmc_step)
             # compute mean of f*|D - this involves f (expanded) and k_star_T_k_inv_unary (compact), so need to iterate over n_labels
             f_star_mean = k_star_T_k_inv.dot(current_f)
             if n_f_star == 0:
@@ -242,7 +263,7 @@ def learn_predict_gpstruct( prepare_from_data,
                             "LL test | last f = %.5g -- " + 
                             "test set error (marginalized over f's)= %.5g -- " +
                             "average per-atom negative log posterior marginals = %.5g -- " +
-                            "hp = %s") % 
+                            "lhp = %s") % 
                             (mcmc_step, 
                              current_ll_train,
                              current_error, 

@@ -1,40 +1,84 @@
 import numpy as np
+import util
 
-def hp_sample(theta, ff, Lfn, Ufn, 
-    read_randoms,
+def update_theta_simple(theta, ff, Lfn, Ufn, 
     slice_width=10, 
-    theta_Lprior = lambda _lhp : np.log(1e-9+(_lhp['length_scale']>np.log(0.1) and (_lhp['length_scale']<np.log(10))))
+    theta_Lprior = lambda _lhp_target : 0 if np.all(_lhp_target>np.log(0.1)) and np.all(_lhp_target<np.log(10)) else np.NINF
     ):
-#function [theta, ff, U] = update_theta_aux_chol(theta, ff, Lfn, Kfn, cardY, slice_width, theta_Lprior, U)
-#UPDATE_THETA_AUX_CHOL MCMC update to GP hyperparam. Fixes nu used to draw f, rather than f itself
-# ported to Python from Iain's Matlab code, Sebastien Bratieres August 2014
+    """
+    update to GP hyperparam. slice sample theta| f, data.
+    ported to Python from Iain's Matlab code, Sebastien Bratieres August 2014
+    """
 
     U = Ufn(theta)
 
+    # Slice sample theta|ff
+    class particle:
+        pass
+    particle.pos = theta
+    particle.ff = ff
+    slice_fn = lambda pp, Lpstar_min : eval_particle_simple(pp, Lfn, theta_Lprior, Lpstar_min, Ufn)
+    slice_fn(particle, Lpstar_min = np.NINF)
+    slice_sweep(particle, slice_fn, sigma = abs(slice_width), step_out = (slice_width > 0))
+    return (particle.pos, particle.ff, particle.Lfn_ff) # could return U !? so you don't have to recompute it ?
+
+
+def eval_particle_simple(pp, Lfn, theta_Lprior, Lpstar_min, Ufn): # should not need to return particle, can modify in-place
+    """
+    pp modified in place
+    U is a precomputed chol(Kfn(pp.pos))
+    alternatively, Ufn is a function that will compute U
+    """
+
+    Ltprior = theta_Lprior(pp.pos)
+    if Ltprior == np.NINF: # save time in case Ltprior is NINF, don't need to run Ufn
+        #print('off slice cos prior limit hit')
+        pp.Lpstar = Ltprior
+        pp.on_slice = False
+        return 
+    U = Ufn(pp.pos)
+    L_inv_f = U.T_solve(pp.ff) # equivalent of L.solve. NB all my U variables are actually lower triangular and should be renamed!
+    Lfprior = -0.5 * L_inv_f.T.dot(L_inv_f) - U.diag_log_sum(); # + const 
+    # log(p(f|theta)) = log(N(pp.ff ; 0, U_theta)) = -1/2 f.T (U.T.dot(U))^1 f - log(sqrt(2 * pi * det(U.T.dot(U)))) 
+
+    pp.Lfn_ff = Lfn(pp.ff)
+    pp.Lpstar = pp.Lfn_ff + Lfprior + Ltprior # p(x|f) + p(f|theta) + p(theta)
+    pp.on_slice = (pp.Lpstar >= Lpstar_min)
+    pp.U = U
+    
+def update_theta_aux_chol(theta, ff, Lfn, Ufn, 
+    slice_width=10, 
+    theta_Lprior = lambda _lhp_target : np.log((np.all(_lhp_target>np.log(0.1)) and np.all(_lhp_target<np.log(10))))
+    ):
+    """
+    update to GP hyperparam. Fixes nu used to draw f, rather than f itself
+    ported to Python from Iain's Matlab code, Sebastien Bratieres August 2014
+    """
+
+    U = Ufn(theta)
     nu = U.T_solve(ff)
 
     # Slice sample theta|nu
     class particle:
         pass
     particle.pos = theta
-    particle = eval_particle(particle, np.NINF, nu, Lfn, theta_Lprior, U=U)
-    step_out = (slice_width > 0)
-    slice_width = abs(slice_width)
-    slice_fn = lambda pp, Lpstar_min : eval_particle(pp, Lpstar_min, nu, Lfn, theta_Lprior, Ufn=Ufn)
-    particle = slice_sweep(particle, slice_fn, read_randoms, slice_width, step_out)
+    slice_fn = lambda pp, Lpstar_min : eval_particle_aux_chol(pp, nu, Lfn, theta_Lprior, Lpstar_min, Ufn)
+    slice_fn(particle, Lpstar_min = np.NINF)
+    slice_sweep(particle, slice_fn, sigma = abs(slice_width), step_out = (slice_width > 0))
     return (particle.pos, particle.ff, particle.Lfn_ff)
 
-def eval_particle(pp, Lpstar_min, nu, Lfn, theta_Lprior, Ufn = None, U = None):
-# U is a precomputed chol(Kfn(pp.pos)) or a function that will compute it
+def eval_particle_aux_chol(pp, nu, Lfn, theta_Lprior, Lpstar_min, Ufn): # should not need to return particle, can modify in-place
+    """
+    pp modified in place
+    U is a precomputed chol(Kfn(pp.pos))
+    alternatively, Ufn is a function that will compute U
+    """
 
-# Prior
-    theta = pp.pos
-    Ltprior = theta_Lprior(theta)
+    Ltprior = theta_Lprior(pp.pos)
     if Ltprior == np.NINF:
-        pp.on_slice = false
+        pp.on_slice = False
         return
-    if U == None:
-        U = Ufn(theta)
+    U = Ufn(pp.pos)
     ff = U.T_dot(nu) # ff = np.dot(nu.T,U).T
 
     pp.Lfn_ff = Lfn(ff)
@@ -42,9 +86,8 @@ def eval_particle(pp, Lpstar_min, nu, Lfn, theta_Lprior, Ufn = None, U = None):
     pp.on_slice = (pp.Lpstar >= Lpstar_min)
     pp.U = U
     pp.ff = ff
-    return pp
 
-def slice_sweep(particle, slice_fn, read_randoms, sigma=1, step_out=True):
+def slice_sweep(particle, slice_fn, sigma=1, step_out=True):# should not need to return particle, can modify in-place
 # %SLICE_SWEEP one set of axis-aligned slice-sampling updates of particle.pos
 # %
 # %     particle = slice_sweep(particle, slice_fn[, sigma[, step_out]])
@@ -81,32 +124,34 @@ def slice_sweep(particle, slice_fn, read_randoms, sigma=1, step_out=True):
 #    sigma = repmat(sigma, DD, 1);
 #end
 # Note: in Iain's code, sigma can be an array of step-sizes, aligned with particle.pos which is the array theta. In my code, theta is a dict. I haven't ported the feature allowing sigma to be an array. So here, the step-size is equal for all hyperparameters.
-
-# A random order (in hyperparameters) is more robust generally and important inside algorithms like nested sampling and AIS
-    for (dd, x_cur) in [('length_scale', particle.pos['length_scale'])]: #particle.pos.items():
+    import util
+    # A random order (in hyperparameters) is more robust generally and important inside algorithms like nested sampling and AIS
+    for (dd, x_cur) in enumerate(particle.pos):
         #print('working in param %s' % dd)
-        Lpstar_min = particle.Lpstar + np.log(read_randoms(1, 'u'))
-
+        Lpstar_min = particle.Lpstar + np.log(util.read_randoms(1, 'u'))
+        #print('particle.on_slice? %g' % particle.on_slice)
         # % Create a horizontal interval (x_l, x_r) enclosing x_cur
-        rr = read_randoms(1, 'u')
+        rr = util.read_randoms(1, 'u')
         x_l = x_cur - rr*sigma
         x_r = x_cur + (1-rr)*sigma
         if step_out:
+            #print('stepping out left with Lpstar_min=%g' % Lpstar_min)
             particle.pos[dd] = x_l
             while True:
-                particle = slice_fn(particle, Lpstar_min)
+                slice_fn(particle, Lpstar_min)
+            #    print('on-slice %g is (particle.Lpstar = %g >= Lpstar_min = %g)' % (particle.on_slice, particle.Lpstar, Lpstar_min))
                 if not particle.on_slice:
                     break
                 particle.pos[dd] = particle.pos[dd] - sigma
-            # print('placed x_l')
+            #print('placed x_l, now stepping out right')
             x_l = particle.pos[dd]
             particle.pos[dd] = x_r
             while True:
-                particle = slice_fn(particle, Lpstar_min)
+                slice_fn(particle, Lpstar_min)
                 if not particle.on_slice:
                     break
                 particle.pos[dd] = particle.pos[dd] + sigma
-            # print('placed x_r')
+            #print('placed x_r, particle.on_slice? %g' % particle.on_slice)
 
             x_r = particle.pos[dd]
 
@@ -114,8 +159,8 @@ def slice_sweep(particle, slice_fn, read_randoms, sigma=1, step_out=True):
         #% One should only get stuck in this loop forever on badly behaved problems,
         #% which should probably be reformulated.
         while True:
-            particle.pos[dd] = read_randoms(1, 'u')*(x_r - x_l) + x_l
-            particle = slice_fn(particle, Lpstar_min)
+            particle.pos[dd] = util.read_randoms(1, 'u')*(x_r - x_l) + x_l
+            slice_fn(particle, Lpstar_min)
             if particle.on_slice:
                 break # Only way to leave the while loop.
             else:
@@ -126,4 +171,3 @@ def slice_sweep(particle, slice_fn, read_randoms, sigma=1, step_out=True):
                     x_l = particle.pos[dd]
                 else:
                     raise Exception('BUG DETECTED: Shrunk to current position and still not acceptable.')
-    return particle

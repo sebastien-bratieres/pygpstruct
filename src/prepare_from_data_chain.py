@@ -74,7 +74,7 @@ def learn_predict_gpstruct_wrapper(
                            )
 
 def prepare_from_data_chain(data_indices_train, data_indices_test, data_folder, logger, n_labels, n_features_x, native_implementation):
-    logger.debug("prepare_from_data_chain started with arguments: " + str(locals()))
+    logger.info("prepare_from_data_chain started with arguments: " + str(locals()))
     
     data_train = loadData(data_folder, n_labels, data_indices_train, n_features_x)
     data_test = loadData(data_folder, n_labels, data_indices_test, n_features_x)

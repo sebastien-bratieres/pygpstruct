@@ -1,3 +1,19 @@
+# will work with dict
+# keeps only the last result in memory at any given time (useful for very big results)
+# will hash input using str() function (cos it should work on small dicts)
+class memoize_once(dict):
+    def __init__(self, func):
+        self.func = func
+
+    def __call__(self, *args):
+        h = str(args)
+        if h in self :
+            return self[h]
+        else:
+            self.clear() # will clear dict before storing new key
+            result = self[h] = self.func(*args)
+            return result
+            
 import learn_predict
 def read_randoms(n=-1, type=None, should=None, true_random_source=True):
     """

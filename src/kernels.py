@@ -9,12 +9,8 @@ def kernel_linear_unary(X_train, X_test, lhp, no_noise):
     if isinstance(p, scipy.sparse.csr.csr_matrix):
         p = p.toarray() # cos if using X_train sparse vector, p will be a csr_matrix -- incidentally in this case the resulting k_unary cannot be flattened, it will result in a (1,X) 2D matrix !
     k_unary = np.exp(lhp["unary"]) * np.array(p, dtype=learn_predict.dtype_for_arrays)
-    if no_noise:
-        return k_unary
-    else:
-        return k_unary + (np.exp(lhp["noise"])) * np.eye(k_unary.shape[0])
-    # to build block diag matrices there's scipy.linalg.block_diag
-
+    return noisify(k_unary, lhp, no_noise)
+    
 import sklearn.metrics.pairwise
 def kernel_exponential_unary(X_train, X_test, lhp, no_noise):
     global dtype
@@ -23,12 +19,22 @@ def kernel_exponential_unary(X_train, X_test, lhp, no_noise):
     # but works with Scipy sparse and Numpy dense arrays
     # I thought it would be equal to X_train.dot(X_train.T) + X_test.dot(X_test.T) - X_train.dot(X_test.T) - X_test.dot(X_train.T))
     # but it doesnt seem to
-    k_unary = learn_predict.dtype_for_arrays(np.exp(lhp["unary"]) * np.exp( (-1/np.exp(lhp["length_scale"])) * p))
+    k_unary = learn_predict.dtype_for_arrays(np.exp(lhp["unary"]) * np.exp( -(1/2) * 1/(np.exp(lhp["length_scale"])**2 ) * p))
+    return noisify(k_unary, lhp, no_noise)
+            
+import scipy.spatial.distance
+def kernel_exponential_ard(X_train, X_test, lhp, no_noise):
+    global dtype
+    p = scipy.spatial.distance.cdist(X_train, X_test, metric='mahalanobis', VI=np.diag(1/np.exp(lhp['variances'])))
+    k_unary = learn_predict.dtype_for_arrays(np.exp(lhp["unary"]) * np.exp( (-1/2) * np.square(p)))
+    return noisify(k_unary, lhp, no_noise)
+
+def noisify(k_unary, lhp, no_noise):
     if no_noise:
         return k_unary
     else:
         return k_unary + (np.exp(lhp["noise"])) * np.eye(k_unary.shape[0])
-            
+    
 def compute_kernels_from_data(kernel, lhp, X_train, X_test, n_labels):
     k_unary = kernel(X_train, X_train, lhp, no_noise=False)
 #    read_randoms(len(k_unary.flatten(order='F')), should=k_unary.flatten(order='F'), true_random_source=False) # DEBUG
@@ -90,6 +96,9 @@ class gram_compact():
         
     def T_dot(self, v):
         return self.dot_wrapper(v, self.gram_unary.T)
+        
+    def diag_log_sum(self):
+        return np.log(np.diag(self.gram_unary)).sum() * self.n_labels + np.log(self.gram_binary_scalar) * self.n_labels ** 2
 
 if __name__ == "__main__":
     import scipy
@@ -116,4 +125,21 @@ if __name__ == "__main__":
     np.testing.assert_array_equal(
         learn_predict.dtype_for_arrays(expand_kernel(k_unary, k_binary_scalar * np.eye(n_labels **2), n_labels).T.dot(v)),
         gram_compact(k_unary, k_binary_scalar, n_labels).T_dot(v)) # test works because this k_unary is not symetric
+    np.testing.assert_approx_equal(
+        np.sum(np.log(np.diag(expand_kernel(k_unary, k_binary_scalar * np.eye(n_labels **2), n_labels)))),
+        gram_compact(k_unary, k_binary_scalar, n_labels).diag_log_sum())
 
+    # test ARD exponential kernel
+    X_train = np.array([[0]])
+    X_test = np.array([[3]])
+    np.testing.assert_approx_equal(kernel_exponential_ard(X_train, X_test, {'unary' : np.log(1), 'variances' : np.log([2])}, no_noise=True),
+                        np.exp(-1/2 * (1/2) * 3**2))
+    X_train = np.array([[0,2]])
+    X_test = np.array([[3,-5]])
+    np.testing.assert_approx_equal(kernel_exponential_ard(X_train, X_test, {'unary' : np.log(6), 'variances' : np.log([2, 5])}, no_noise=True),
+                        6 * np.exp(-1/2 * ((1/2) * 3**2 + (1/5) * 7**2)))
+    np.testing.assert_approx_equal(
+        kernel_exponential_unary(X_train, X_test, {'unary': np.log(1), 'length_scale': np.log(7)}, no_noise=True),
+        kernel_exponential_ard(X_train, X_test, {'unary': np.log(1), 'variances' : np.log([7**2, 7**2])}, no_noise=True)
+        )
+        
