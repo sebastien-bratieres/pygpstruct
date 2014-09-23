@@ -71,7 +71,7 @@ MOD_INIT(chain_forwards_backwards_native)
 // Functions available to Python
 
 static PyObject * init_kappa(PyObject *self, PyObject *args) {
-    npy_intp T_max;
+    int T_max;
     if (!PyArg_ParseTuple(args, "i",
 			&T_max)) {
 		return NULL;
