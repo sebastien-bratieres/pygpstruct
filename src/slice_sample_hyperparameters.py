@@ -1,13 +1,16 @@
 import numpy as np
 import util
 
+"""
+     ported to Python from Iain Murray's Matlab code, Sebastien Bratieres August 2014
+"""
+
 def update_theta_simple(theta, ff, Lfn, Ufn, 
     slice_width=10, 
     theta_Lprior = lambda _lhp_target : 0 if np.all(_lhp_target>np.log(0.1)) and np.all(_lhp_target<np.log(10)) else np.NINF
     ):
     """
-    update to GP hyperparam. slice sample theta| f, data.
-    ported to Python from Iain's Matlab code, Sebastien Bratieres August 2014
+    update to GP hyperparam. slice sample theta| f, data. Does not update f, so requires separate procedure to update f (eg elliptical slice sampling).
     """
 
     U = Ufn(theta)
@@ -52,7 +55,6 @@ def update_theta_aux_chol(theta, ff, Lfn, Ufn,
     ):
     """
     update to GP hyperparam. Fixes nu used to draw f, rather than f itself
-    ported to Python from Iain's Matlab code, Sebastien Bratieres August 2014
     """
 
     U = Ufn(theta)
@@ -171,3 +173,164 @@ def slice_sweep(particle, slice_fn, sigma=1, step_out=True):# should not need to
                     x_l = particle.pos[dd]
                 else:
                     raise Exception('BUG DETECTED: Shrunk to current position and still not acceptable.')
+                    
+
+# SURROGATE DATA METHOD
+
+def update_theta_aux_surr(theta, ff, Lfn, Kfn, aux, theta_Lprior, slice_width):
+# %UPDATE_THETA_AUX_SURR MCMC update to GP hyper-param based on aux. noisy vars
+# %
+# %     [theta, ff] = update_theta_aux_noise(theta, ff, Lfn, Kfn, aux, theta_Lprior);
+# %
+# % Inputs:
+# %             theta Kx1 hyper-parameters (can be an array of any size)
+# %                ff Nx1 apriori Gaussian values
+# %               Lfn @fn Log-likelihood function, Lfn(ff) returns a scalar
+# %               Kfn @fn Kfn(theta) returns NxN covariance matrix
+# %                       NB: this should contain jitter (if necessary) to
+# %                       ensure the result is positive definite.
+# %
+# % Specify aux in one of three ways:
+# % ---------------------------------
+# %           aux_std Nx1 std-dev of auxiliary noise to add to each value
+# %                       (can also be a 1x1).
+# % OR
+# %        aux_std_fn @fn Function that returns auxiliary noise level(s) to use:
+# %                       aux_std = aux_std_fn(theta, K);
+# % OR
+# %               aux cel A pair: {aux_std_fn, aux_cache} called like this:
+# %                       [aux_std, aux_cache] = aux_std_fn(theta, K, aux_cache);
+# %                       The cache could be used (for example) to notice that
+# %                       relevant parts of theta or K haven't changed, and
+# %                       immediately returning the old aux_std.
+# % ---------------------------------
+# %
+# %      theta_Lprior @fn Log-prior, theta_Lprior(theta) returns a scalar
+# %
+# % Outputs:
+# %             theta Kx1 updated hyper-parameters (Kx1 or same size as inputted)
+# %                ff Nx1 updated apriori Gaussian values
+# %               aux  -  Last aux_std computed, or {aux_std_fn, aux_cache},
+# %                       depending on what was passed in.
+# %             cholK NxN chol(Kfn(theta))
+# %
+# % The model is draw g ~ N(0, K + S), (imagine as f ~ N(0, K) + noise with cov S)
+# % Draw f ~ N(m_p, C_p), using posterior mean and covariance given g.
+# % But implement that using nu ~ randn(N,1). Then clamp nu's while changing K.
+# %
+# % K is obtained from Kfn.
+# % S = diag(aux_std.^2), or for scalar aux_std (aux_std^2 * eye(N)).
+
+# % Iain Murray, November 2009, January 2010, May 2010
+
+# % If there is a good reason for it, there's no real reason full-covariance
+# % auxiliary noise couldn't be added. It would just be more expensive as sampling
+# % would require decomposing the noise covariance matrix. For now this code
+# % hasn't implemented that option.
+
+    class pp:
+        pass
+    pp.pos = theta
+    pp.Kfn = Kfn
+    # only implementing fixed auxiliary noise level for now
+    pp.aux_std = aux
+    pp.aux_var = aux * aux
+    # if isnumeric(aux)
+        # % Fixed auxiliary noise level
+        # pp.adapt_aux = 0;
+        # pp.aux_std = aux;
+        # pp.aux_var = aux.*aux;
+    # elseif iscell(aux)
+        # % Adapting noise level, with computations cached
+        # pp.adapt_aux = 2;
+        # pp.aux_fn = aux{1};
+        # pp.aux_cache = aux{2};
+    # else
+        # % Simple function to choose noise level
+        # pp.adapt_aux = 1;
+        # pp.aux_fn = aux;
+    # end
+    pp.size_f = ff.shape[0]
+    pp.gg = np.zeros((pp.size_f))
+    pp = theta_changed(pp)
+
+    # Instantiate g|f
+    pp.gg = ff + np.randn((pp.size_f)) * pp.aux_std
+    pp.Sinv_g = pp.gg / pp.aux_var
+
+    # Instantiate nu|f,gg
+	# Algo 3, line 2: eta = L_R_theta^-1 (f - m_theta,g)
+	# Matlab: x=A'\b <=> A' x = b
+	# Numpy: A' x = b <=> x = np.linalg.solve(A.T, b) 
+	# my gram_compact implementation: A' x = b <=> x = A.T_solve(b)
+    pp.nu = pp.U_invR.dot(ff) - pp.U_invR.T_solve(pp.Sinv_g) #pp.U_invR*ff(:) - pp.U_invR'\pp.Sinv_g;
+
+
+    # Slice sample update of theta|g,nu
+    slice_fn = lambda pp, Lpstar_min : eval_particle_aux_surr(pp, Lpstar_min, Lfn, theta_Lprior)
+    # Compute current log-prob (up to constant) needed by slice sampling:
+    eval_particle_aux_surr(pp, np.NINF, Lfn, theta_Lprior, theta_unchanged = True) # theta hasn't moved yet, don't recompute covariances
+    # would want to replace by 
+    # slice_fn(particle, Lpstar_min = np.NINF)
+    # if it weren't for theta_unchanged=True which is hard to pass
+
+    slice_sweep(pp, slice_fn, slice_width = abs(slice_width), step_out = (slice_width > 0))
+    return (particle.pos, particle.ff, particle.Lfn_ff)
+    
+    # optional outputs, not doing yet
+    # if iscell(aux)
+        # aux = {pp.aux_fn, pp.aux_cache};
+    # else
+        # aux = pp.aux_std;
+    # end
+    # cholK = pp.U;
+
+
+def theta_changed(pp):
+    """ Will call after changing hyperparameters to update covariances and their decompositions."""
+    theta = pp.pos;
+    K = pp.Kfn(theta); # TODO for v1, cannot use compact representation
+    # if pp.adapt_aux
+        # if pp.adapt_aux == 1
+            # pp.aux_std = pp.aux_fn(theta, K);
+        # elseif pp.adapt_aux == 2
+            # [pp.aux_std, pp.aux_cache] = pp.aux_fn(theta, K, pp.aux_cache);
+        # end
+        # pp.aux_var = pp.aux_std .* pp.aux_std;
+        # pp.Sinv_g = pp.gg ./ pp.aux_var;
+    # end
+    pp.U = K.cholesky_T() # Matlab chol(K);
+	# Matlab chol(K) = upper Cholesky = lower Cholesky transpose = np.linalg.cholesky(K).T
+    # pp.iK = inv(K)
+    pp.U_invR = K.cholesky_inv_add_diag_T(1/pp.aux_var) # Matlab chol(plus_diag(pp.iK, 1./pp.aux_var));
+	# %pp.U_noise = chol(plus_diag(K, aux_var_vec));
+
+def eval_particle_aux_surr(pp, Lpstar_min, Lfn, theta_Lprior, theta_unchanged = False):
+
+    # Prior on theta
+    Ltprior = theta_Lprior(pp.pos);
+    if Ltprior == -np.NINF
+        pp.on_slice = False
+        return
+    if not theta_unchanged:
+        pp = theta_changed(pp)
+
+    # Update f|gg,nu,theta
+    pp.ff = pp.U_invR.solve(pp.nu) + pp.U_invR.solve(pp.Sinv_g) # pp.U_invR\pp.nu + solve_chol(pp.U_invR, pp.Sinv_g);
+	# solve_chol really means "solve knowing that matrix is triangular", but doesn't affect the matrices
+
+    # % Compute joint probability and slice acceptability.
+    # % I have dropped the constant: -0.5*length(pp.gg)*log(2*pi)
+    # %Lgprior = -0.5*(pp.gg'*solve_chol(pp.U_noise, pp.gg)) - sum(log(diag(pp.U_noise)));
+    # %pp.Lpstar = Ltprior + Lgprior + Lfn(pp.ff);
+    # %
+    # % This version doesn't need U_noise, but commenting out the U_noise line and
+    # % using this version doesn't actually seem to be faster?
+    Lfprior = -0.5 * pp.ff.T.dot(pp.U.solve(pp.ff)) - pp.U.diag_log_sum() #-0.5*(pp.ff'*solve_chol(pp.U, pp.ff)) - sum(log(diag(pp.U)));
+    LJacobian = - pp.U_invR.diag_log_sum() # -sum(log(diag(pp.U_invR)));
+#    %LJacobian = sum(log(diag(pp.U_R)));
+    Lg_f = -0.5 * np.sum((pp.gg - pp.ff) ** 2) / pp.aux_var - np.sum(np.log(pp.aux_var * np.ones(pp.ff.shape[0]))) #-0.5*sum((pp.gg - pp.ff).^2)./pp.aux_var - sum(log(pp.aux_var.*ones(size(pp.ff))));
+    pp.Lpstar = Ltprior + Lg_f + Lfprior + Lfn(pp.ff) + LJacobian
+    # log p(theta) + log p(g|f) + log p(f|theta) + log p(x|f) + log p()
+
+    pp.on_slice = (pp.Lpstar >= Lpstar_min)

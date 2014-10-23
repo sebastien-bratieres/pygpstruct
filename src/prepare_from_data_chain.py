@@ -12,8 +12,9 @@ try:
     native_implementation_found = True
     @numba.jit # not even sure this speeds anything up. if it doesn't speed up anything, could remove this function and just define it 
     # inline as a lambda function
-    def log_likelihood_function_native(log_node_pot, log_edge_pot, dataset_Y_n, object_size, n_labels):
-        return chain_forwards_backwards_native.log_likelihood(log_edge_pot, log_node_pot, dataset_Y_n)
+    def log_likelihood_function_native(node_pot, edge_pot, dataset_Y_n, object_size, n_labels):
+        # native implementation takes linear (not log) domain potentials
+        return chain_forwards_backwards_native.log_likelihood(edge_pot, node_pot, dataset_Y_n)
 except ImportError as ie:
     native_implementation_found = False
 

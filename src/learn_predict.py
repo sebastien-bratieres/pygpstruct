@@ -146,14 +146,15 @@ def learn_predict_gpstruct( prepare_from_data,
     if hp_debug:
         history_f = np.ones((n_samples, current_f.shape[0]))*4 # flag
         history_ll = np.ones((n_samples)) * 4
-        history_hp = np.ones((n_samples, 10)) * 4
+        history_hp = []
         
     # ---------------- MCMC loop 
     while not stop_check() and (mcmc_step < n_samples or n_samples == 0):
         if hp_debug:
             history_f[mcmc_step, :] = current_f
             history_ll[mcmc_step] = ll_train(current_f)
-            history_hp[mcmc_step, :] = lhp['variances']
+            import copy
+            history_hp.append(copy.deepcopy(lhp))
         if not (hp_sampling_mode == None) and np.mod(mcmc_step, hp_sampling_thinning) == 0 :
             def update_lhp(lhp, variances): 
                 lhp['variances'] = variances
@@ -166,7 +167,7 @@ def learn_predict_gpstruct( prepare_from_data,
                     Ufn = util.memoize_once(lambda _lhp_target : kernels.gram_compact(np.linalg.cholesky(kernel(X_train, X_train, update_lhp(lhp, _lhp_target), no_noise=False)), 
                                                                                       np.sqrt(np.exp(lhp["binary"])),
                                                                                       n_labels)),
-                    theta_Lprior = lambda _lhp_target : np.log((np.all(_lhp_target>np.log(1e-3)) and np.all(_lhp_target<np.log(1e2)))),
+                    theta_Lprior = lambda _lhp_target : 0 if (np.all(_lhp_target>np.log(1e-3)) and np.all(_lhp_target<np.log(1e2))) else np.NINF,
                     )
                 update_lhp(lhp, lhp_target) # should be already done because particle.pos (mutable) is updated in-place
             elif (hp_sampling_mode == 'prior whitening'):
@@ -177,7 +178,7 @@ def learn_predict_gpstruct( prepare_from_data,
                     Ufn = util.memoize_once(lambda _lhp_target : kernels.gram_compact(np.linalg.cholesky(kernel(X_train, X_train, update_lhp(lhp, _lhp_target), no_noise=False)), 
                                                                                       np.sqrt(np.exp(lhp["binary"])),
                                                                                       n_labels)),
-                    theta_Lprior = lambda _lhp_target : np.log((np.all(_lhp_target>np.log(1e-3)) and np.all(_lhp_target<np.log(1e2)))),
+                    theta_Lprior = lambda _lhp_target : 0 if (np.all(_lhp_target>np.log(1e-3)) and np.all(_lhp_target<np.log(1e2))) else np.NINF,
                     )
                 update_lhp(lhp, lhp_target) # should be already done because particle.pos (mutable) is updated in-place
             else:

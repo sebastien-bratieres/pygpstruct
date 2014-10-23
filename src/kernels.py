@@ -72,12 +72,35 @@ class gram_compact():
         self.n_labels = n_labels
         self.n_star = gram_unary.shape[0]
         self.n = gram_unary.shape[1]
-        
-    def T_solve(self, v):
+		
+    def cholesky_T(self):
+		return gram_compact(np.linalg.cholesky(self.gram_unary).T, np.sqrt(self.gram_binary_scalar), self.n_labels)
+    
+	def T_solve(self, v):
+		"""
+		equivalent forms of x = K.T_solve(v):
+		x = numpy.linalg.solve(K.T, v)
+		K.T * x = v
+		Matlab x = K'\v
+		"""
         assert(v.shape[0] == (self.n_labels * self.n + self.n_labels ** 2))
         result = np.zeros((self.n_labels * self.n + self.n_labels ** 2), dtype=learn_predict.dtype_for_arrays)
         for label in range(self.n_labels):
             result[label * self.n : (label + 1) * self.n] = np.linalg.solve(self.gram_unary.T, v[label*self.n : (label+1)*self.n])
+        result[self.n*self.n_labels:] = v[self.n*self.n_labels:] / self.gram_binary_scalar # binary section, should be length n_labels ** 2
+        return result
+    
+	def solve(self, v):
+		"""
+		equivalent forms of x = K.solve(v):
+		x = numpy.linalg.solve(K, v)
+		K * x = v
+		Matlab x = K\v
+		"""
+        assert(v.shape[0] == (self.n_labels * self.n + self.n_labels ** 2))
+        result = np.zeros((self.n_labels * self.n + self.n_labels ** 2), dtype=learn_predict.dtype_for_arrays)
+        for label in range(self.n_labels):
+            result[label * self.n : (label + 1) * self.n] = np.linalg.solve(self.gram_unary, v[label*self.n : (label+1)*self.n])
         result[self.n*self.n_labels:] = v[self.n*self.n_labels:] / self.gram_binary_scalar # binary section, should be length n_labels ** 2
         return result
     
@@ -98,11 +121,33 @@ class gram_compact():
         return self.dot_wrapper(v, self.gram_unary.T)
         
     def diag_log_sum(self):
+		"""
+			return sum(log(diag(self)))
+		"""
         return np.log(np.diag(self.gram_unary)).sum() * self.n_labels + np.log(self.gram_binary_scalar) * self.n_labels ** 2
+		
+	def inv_add_diag_cholesky_T(self, scalar):
+		"""
+		K.inv_add_diag_cholesky_T(s) = Matlab lower_chol(K^-1 + diag(s))
+		"""
+		K_inv = np.linalg.inv(self.gram_unary)
+		diag_matrix = np.eye(self.n_labels * self.n) * scalar
+		return gram_compact(np.linalg.cholesky(K_inv + diag_matrix), np.sqrt(1 / self.gram_binary_scalar + scalar), self.n_labels)
+
+
 
 if __name__ == "__main__":
-    import scipy
+	import numpy
+	import scipy.linalg
 
+	a = numpy.random.rand(10,10)
+	u = numpy.linalg.cholesky(a.T.dot(a)).T
+	v = numpy.random.rand(10)
+	numpy.testing.assert_array_almost_equal(
+		numpy.linalg.solve(u,v),
+		scipy.linalg.solve_triangular(u,v))
+	
+	# test gram_compact
     def expand_kernel(k_unary, k_binary, n_labels):
         l = [k_unary]*n_labels # [k_unary, k_unary, ... k_unary], with length n_label
         l.append(k_binary)
@@ -123,8 +168,19 @@ if __name__ == "__main__":
         learn_predict.dtype_for_arrays(np.linalg.solve(expand_kernel(k_unary, k_binary_scalar * np.eye(n_labels **2), n_labels).T, v)),
         gram_compact(k_unary, k_binary_scalar, n_labels).T_solve(v))
     np.testing.assert_array_equal(
+        learn_predict.dtype_for_arrays(np.linalg.solve(expand_kernel(k_unary, k_binary_scalar * np.eye(n_labels **2), n_labels), v)),
+        gram_compact(k_unary, k_binary_scalar, n_labels).solve(v))
+    np.testing.assert_array_equal(
+        learn_predict.dtype_for_arrays(np.linalg.cholesky(expand_kernel(k_unary, k_binary_scalar * np.eye(n_labels **2), n_labels)).T,
+        gram_compact(k_unary, k_binary_scalar, n_labels).cholesky_T())
+	s = 7
+    np.testing.assert_array_equal(
+        learn_predict.dtype_for_arrays(np.linalg.cholesky(np.linalg.inv(expand_kernel(k_unary, k_binary_scalar * np.eye(n_labels **2), n_labels)) 
+			+ np.eye(n_labels * n + n_labels ** 2) * s).T,
+        gram_compact(k_unary, k_binary_scalar, n_labels).inv_add_diag_cholesky_T(s))
+    np.testing.assert_array_equal(
         learn_predict.dtype_for_arrays(expand_kernel(k_unary, k_binary_scalar * np.eye(n_labels **2), n_labels).T.dot(v)),
-        gram_compact(k_unary, k_binary_scalar, n_labels).T_dot(v)) # test works because this k_unary is not symetric
+        gram_compact(k_unary, k_binary_scalar, n_labels).T_dot(v)) # test works because this k_unary is not symmetric
     np.testing.assert_approx_equal(
         np.sum(np.log(np.diag(expand_kernel(k_unary, k_binary_scalar * np.eye(n_labels **2), n_labels)))),
         gram_compact(k_unary, k_binary_scalar, n_labels).diag_log_sum())
