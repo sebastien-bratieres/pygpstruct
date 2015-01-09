@@ -79,6 +79,7 @@ def eval_particle_aux_chol(pp, nu, Lfn, theta_Lprior, Lpstar_min, Ufn): # should
     Ltprior = theta_Lprior(pp.pos)
     if Ltprior == np.NINF:
         pp.on_slice = False
+        pp.Lpstar = np.NINF
         return
     U = Ufn(pp.pos)
     ff = U.T_dot(nu) # ff = np.dot(nu.T,U).T
@@ -127,13 +128,14 @@ def slice_sweep(particle, slice_fn, sigma=1, step_out=True):# should not need to
 #end
 # Note: in Iain's code, sigma can be an array of step-sizes, aligned with particle.pos which is the array theta. In my code, theta is a dict. I haven't ported the feature allowing sigma to be an array. So here, the step-size is equal for all hyperparameters.
     import util
+    assert(particle.on_slice)
     # A random order (in hyperparameters) is more robust generally and important inside algorithms like nested sampling and AIS
     for (dd, x_cur) in enumerate(particle.pos):
-        #print('working in param %s' % dd)
-        Lpstar_min = particle.Lpstar + np.log(util.read_randoms(1, 'u'))
+        #print('working in param %s' % d)
+        Lpstar_min = particle.Lpstar + np.log(util.read_randoms(1, 'u')[0]) # take [0] to make scalar
         #print('particle.on_slice? %g' % particle.on_slice)
         # % Create a horizontal interval (x_l, x_r) enclosing x_cur
-        rr = util.read_randoms(1, 'u')
+        rr = util.read_randoms(1, 'u')[0]
         x_l = x_cur - rr*sigma
         x_r = x_cur + (1-rr)*sigma
         if step_out:
@@ -161,23 +163,30 @@ def slice_sweep(particle, slice_fn, sigma=1, step_out=True):# should not need to
         #% One should only get stuck in this loop forever on badly behaved problems,
         #% which should probably be reformulated.
         while True:
-            particle.pos[dd] = util.read_randoms(1, 'u')*(x_r - x_l) + x_l
+            particle.pos[dd] = util.read_randoms(1, 'u')[0]*(x_r - x_l) + x_l # proposed new point
             slice_fn(particle, Lpstar_min)
             if particle.on_slice:
                 break # Only way to leave the while loop.
             else:
-                # Shrink in
+                # Shrink in, from the left or the right according to which side the proposal is
                 if particle.pos[dd] > x_cur:
                     x_r = particle.pos[dd]
                 elif particle.pos[dd] < x_cur:
                     x_l = particle.pos[dd]
                 else:
+                    print(x_cur)
+                    print(particle.pos[dd])
+                    print(x_cur == particle.pos[dd])
+                    # check that current position is on slice
+                    particle.pos[dd] = x_cur
+                    slice_fn(particle, Lpstar_min)
+                    print("particle on slice? %s" % str(particle.on_slice))
                     raise Exception('BUG DETECTED: Shrunk to current position and still not acceptable.')
                     
 
 # SURROGATE DATA METHOD
 
-def update_theta_aux_surr(theta, ff, Lfn, Kfn, aux, theta_Lprior, slice_width):
+def update_theta_aux_surr(theta, ff, Lfn, Kfn, theta_Lprior, slice_width=10, aux=0.1):
 # %UPDATE_THETA_AUX_SURR MCMC update to GP hyper-param based on aux. noisy vars
 # %
 # %     [theta, ff] = update_theta_aux_noise(theta, ff, Lfn, Kfn, aux, theta_Lprior);
@@ -252,10 +261,10 @@ def update_theta_aux_surr(theta, ff, Lfn, Kfn, aux, theta_Lprior, slice_width):
     # end
     pp.size_f = ff.shape[0]
     pp.gg = np.zeros((pp.size_f))
-    pp = theta_changed(pp)
+    theta_changed(pp)
 
     # Instantiate g|f
-    pp.gg = ff + np.randn((pp.size_f)) * pp.aux_std
+    pp.gg = ff + np.random.randn((pp.size_f)) * pp.aux_std
     pp.Sinv_g = pp.gg / pp.aux_var
 
     # Instantiate nu|f,gg
@@ -270,12 +279,18 @@ def update_theta_aux_surr(theta, ff, Lfn, Kfn, aux, theta_Lprior, slice_width):
     slice_fn = lambda pp, Lpstar_min : eval_particle_aux_surr(pp, Lpstar_min, Lfn, theta_Lprior)
     # Compute current log-prob (up to constant) needed by slice sampling:
     eval_particle_aux_surr(pp, np.NINF, Lfn, theta_Lprior, theta_unchanged = True) # theta hasn't moved yet, don't recompute covariances
+    assert(pp.on_slice)
+    if False:
+        print("after eval_particle_aux_surr")
+        print('particle on slice? %g, pp.Lpstar = %g' % (pp.on_slice, pp.Lpstar))
     # would want to replace by 
     # slice_fn(particle, Lpstar_min = np.NINF)
     # if it weren't for theta_unchanged=True which is hard to pass
 
-    slice_sweep(pp, slice_fn, slice_width = abs(slice_width), step_out = (slice_width > 0))
-    return (particle.pos, particle.ff, particle.Lfn_ff)
+    slice_sweep(pp, slice_fn, sigma = abs(slice_width), step_out = (slice_width > 0))
+    #print(pp.pos)
+    #print(pp.Lfn_ff)
+    return (pp.pos, pp.ff, pp.Lfn_ff)
     
     # optional outputs, not doing yet
     # if iscell(aux)
@@ -302,18 +317,19 @@ def theta_changed(pp):
     pp.U = K.cholesky_T() # Matlab chol(K);
 	# Matlab chol(K) = upper Cholesky = lower Cholesky transpose = np.linalg.cholesky(K).T
     # pp.iK = inv(K)
-    pp.U_invR = K.cholesky_inv_add_diag_T(1/pp.aux_var) # Matlab chol(plus_diag(pp.iK, 1./pp.aux_var));
+    pp.U_invR = K.inv_add_diag_cholesky_T(1/pp.aux_var) # Matlab chol(plus_diag(pp.iK, 1./pp.aux_var));
 	# %pp.U_noise = chol(plus_diag(K, aux_var_vec));
 
 def eval_particle_aux_surr(pp, Lpstar_min, Lfn, theta_Lprior, theta_unchanged = False):
 
     # Prior on theta
-    Ltprior = theta_Lprior(pp.pos);
-    if Ltprior == -np.NINF
+    Ltprior = theta_Lprior(pp.pos)
+    if Ltprior == np.NINF:
         pp.on_slice = False
+        pp.Lpstar = np.NINF
         return
     if not theta_unchanged:
-        pp = theta_changed(pp)
+        theta_changed(pp)
 
     # Update f|gg,nu,theta
     pp.ff = pp.U_invR.solve(pp.nu) + pp.U_invR.solve(pp.Sinv_g) # pp.U_invR\pp.nu + solve_chol(pp.U_invR, pp.Sinv_g);
@@ -330,7 +346,9 @@ def eval_particle_aux_surr(pp, Lpstar_min, Lfn, theta_Lprior, theta_unchanged = 
     LJacobian = - pp.U_invR.diag_log_sum() # -sum(log(diag(pp.U_invR)));
 #    %LJacobian = sum(log(diag(pp.U_R)));
     Lg_f = -0.5 * np.sum((pp.gg - pp.ff) ** 2) / pp.aux_var - np.sum(np.log(pp.aux_var * np.ones(pp.ff.shape[0]))) #-0.5*sum((pp.gg - pp.ff).^2)./pp.aux_var - sum(log(pp.aux_var.*ones(size(pp.ff))));
-    pp.Lpstar = Ltprior + Lg_f + Lfprior + Lfn(pp.ff) + LJacobian
+    pp.Lfn_ff = Lfn(pp.ff)
+    pp.Lpstar = Ltprior + Lg_f + Lfprior + pp.Lfn_ff + LJacobian
     # log p(theta) + log p(g|f) + log p(f|theta) + log p(x|f) + log p()
-
     pp.on_slice = (pp.Lpstar >= Lpstar_min)
+    if False:
+        print('particle on slice? %g, pp.Lpstar = %g, Lpstar_min = %g' % (pp.on_slice, pp.Lpstar, Lpstar_min))

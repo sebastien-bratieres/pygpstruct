@@ -25,7 +25,7 @@ def learn_predict_gpstruct( prepare_from_data,
                             hp_sampling_thinning=1, 
                             hp_sampling_mode=None, 
                             prior=1, 
-                            lhp_update={}, # defaults are     lhp = {'unary': np.log(1), 'binary': np.log(0.01), 'length_scale': np.log(8), 'noise' : np.log(1e-4)}
+                            lhp_update={}, # defaults are     lhp = {'unary': np.log(1), 'binary': np.log(0.01), 'length_scale': np.log(8), 'jitter' : np.log(1e-4)}
                             kernel=kernels.kernel_exponential_unary,
                             random_seed=0,
                             stop_check=None, 
@@ -43,7 +43,8 @@ def learn_predict_gpstruct( prepare_from_data,
     # hp_mode: 0 for no hp sampling, 1 for prior whitening, 2 for surrogate
     %   data/null aux
     % prior: 1 for narrow, 2 for wide uniform prior
-    default hyperparameters:     lhp = {'unary': np.log(1), 'binary': np.log(0.01), 'length_scale': np.log(8), 'noise' : np.log(1e-4)}
+    default hyperparameters:     lhp = {'unary': np.log(1), 'binary': np.log(0.01), 'length_scale': np.log(8), 'jitter' : np.log(1e-4)}
+    lhp_update will update these hyperparameters, to yield the (initial) log hyperparameters (which might get updated when hp sampling kicks in)
 
     """
     global dtype
@@ -116,7 +117,7 @@ def learn_predict_gpstruct( prepare_from_data,
     logger.debug("prepare kernel matrices")
 
     # override default hyperparameters with argument lhp_update
-    lhp = {'unary': np.log(1), 'binary': np.log(0.01), 'length_scale': np.log(8), 'noise' : np.log(1e-4)}
+    lhp = {'unary': np.log(1), 'binary': np.log(0.01), 'length_scale': np.log(8), 'jitter' : np.log(1e-4)}
     lhp.update(lhp_update)
     compute_kernels = lambda lhp : kernels.compute_kernels_from_data(kernel, lhp, X_train, X_test, n_labels)
     (lower_chol_k_compact, k_star_T_k_inv) = compute_kernels(lhp)
@@ -155,8 +156,11 @@ def learn_predict_gpstruct( prepare_from_data,
             history_ll[mcmc_step] = ll_train(current_f)
             import copy
             history_hp.append(copy.deepcopy(lhp))
-        if not (hp_sampling_mode == None) and np.mod(mcmc_step, hp_sampling_thinning) == 0 :
+        if not (hp_sampling_mode == None) and (mcmc_step > 0) and np.mod(mcmc_step, hp_sampling_thinning) == 0 :
             def update_lhp(lhp, variances): 
+                """
+                update lhp in-place, and return them
+                """
                 lhp['variances'] = variances
                 return lhp
             if (hp_sampling_mode == 'slice sample theta'):
@@ -164,7 +168,7 @@ def learn_predict_gpstruct( prepare_from_data,
                     theta = lhp['variances'], 
                     ff = current_f, 
                     Lfn = ll_train, 
-                    Ufn = util.memoize_once(lambda _lhp_target : kernels.gram_compact(np.linalg.cholesky(kernel(X_train, X_train, update_lhp(lhp, _lhp_target), no_noise=False)), 
+                    Ufn = util.memoize_once(lambda _lhp_target : kernels.gram_compact(np.linalg.cholesky(kernel(X_train, X_train, update_lhp(lhp, _lhp_target), no_jitter=False)), 
                                                                                       np.sqrt(np.exp(lhp["binary"])),
                                                                                       n_labels)),
                     theta_Lprior = lambda _lhp_target : 0 if (np.all(_lhp_target>np.log(1e-3)) and np.all(_lhp_target<np.log(1e2))) else np.NINF,
@@ -175,8 +179,19 @@ def learn_predict_gpstruct( prepare_from_data,
                     theta = lhp['variances'], 
                     ff = current_f, 
                     Lfn = ll_train, 
-                    Ufn = util.memoize_once(lambda _lhp_target : kernels.gram_compact(np.linalg.cholesky(kernel(X_train, X_train, update_lhp(lhp, _lhp_target), no_noise=False)), 
+                    Ufn = util.memoize_once(lambda _lhp_target : kernels.gram_compact(np.linalg.cholesky(kernel(X_train, X_train, update_lhp(lhp, _lhp_target), no_jitter=False)), 
                                                                                       np.sqrt(np.exp(lhp["binary"])),
+                                                                                      n_labels)),
+                    theta_Lprior = lambda _lhp_target : 0 if (np.all(_lhp_target>np.log(1e-3)) and np.all(_lhp_target<np.log(1e2))) else np.NINF,
+                    )
+                update_lhp(lhp, lhp_target) # should be already done because particle.pos (mutable) is updated in-place
+            elif (hp_sampling_mode == 'surrogate data'):
+                (lhp_target, current_f, current_ll_train) = slice_sample_hyperparameters.update_theta_aux_surr(
+                    theta = lhp['variances'], 
+                    ff = current_f, 
+                    Lfn = ll_train, 
+                    Kfn = util.memoize_once(lambda _lhp_target : kernels.gram_compact(kernel(X_train, X_train, update_lhp(lhp, _lhp_target), no_jitter=False), 
+                                                                                      np.exp(lhp["binary"]),
                                                                                       n_labels)),
                     theta_Lprior = lambda _lhp_target : 0 if (np.all(_lhp_target>np.log(1e-3)) and np.all(_lhp_target<np.log(1e2))) else np.NINF,
                     )
