@@ -6,6 +6,7 @@ import prepare_from_data
 import learn_predict
 import kernels
 import numba
+import copy
 
 try:
     import chain_forwards_backwards_native
@@ -18,6 +19,14 @@ try:
 except ImportError as ie:
     native_implementation_found = False
 
+def default_set_lhp_target(lhp_, lhp_target):
+    new_lhp = copy.deepcopy(lhp_)
+    new_lhp["unary"] = lhp_target[0]
+    new_lhp["binary"] = lhp_target[1]
+    return new_lhp
+def default_get_lhp_target(lhp_):
+    return np.array([lhp_["unary"], lhp_["binary"]], dtype=learn_predict.dtype_for_arrays)
+    
 def learn_predict_gpstruct_wrapper(
     data_indices_train=np.arange(0,10), 
     data_indices_test=np.arange(10,20),
@@ -27,11 +36,16 @@ def learn_predict_gpstruct_wrapper(
     console_log=True, # log to console as well as to file ?
     n_samples=0, 
     prediction_thinning=1, # how often (in terms of MCMC iterations) to carry out prediction, ie compute f*|f and p(y*)
-    lhp_update={},
-    kernel=kernels.kernel_linear_unary,
+    prediction_verbosity=None,
+    lhp_init={'unary': np.log(1), 'binary': np.log(0.01), 'jitter' : np.log(1e-4)},
+    lhp_gset = (default_get_lhp_target, default_set_lhp_target),
+    hp_sampling_thinning=1, 
+    hp_sampling_mode=None,
+    kernel=kernels.kernel_linear,
     random_seed=0,
     stop_check=None,
-    native_implementation=False
+    native_implementation=False,
+    hp_debug=False
     ):
     if data_folder==None:
         data_folder = './data/%s' % task
@@ -68,10 +82,15 @@ def learn_predict_gpstruct_wrapper(
                            console_log=console_log,
                            n_samples=n_samples, 
                            prediction_thinning=prediction_thinning, 
-                           lhp_update=lhp_update,
+                           prediction_verbosity=prediction_verbosity,
+                           hp_sampling_thinning=hp_sampling_thinning, 
+                           hp_sampling_mode=hp_sampling_mode,
+                           lhp_init=lhp_init,
+                           lhp_gset=lhp_gset,
                            kernel=kernel,
                            random_seed=random_seed,
-                           stop_check=stop_check
+                           stop_check=stop_check,
+                           hp_debug=hp_debug
                            )
 
 def prepare_from_data_chain(data_indices_train, data_indices_test, data_folder, logger, n_labels, n_features_x, native_implementation):
@@ -159,7 +178,6 @@ def loadData(dirName, n_labels, indexData, n_features_x):
                 f_index_max = f_index_max + 1
 
     dataset.binaries = np.arange(f_index_max, f_index_max + n_labels**2).reshape((dataset.n_labels, dataset.n_labels), order='F')
-    #f_index_max += n_labels**2 
     
     return dataset
 

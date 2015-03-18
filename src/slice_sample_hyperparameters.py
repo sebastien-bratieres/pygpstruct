@@ -5,7 +5,8 @@ import util
      ported to Python from Iain Murray's Matlab code, Sebastien Bratieres August 2014
 """
 
-def update_theta_simple(theta, ff, Lfn, Ufn, 
+def update_theta_simple(theta, ff, lik_fn, 
+    Lfn, # lower chol 
     slice_width=10, 
     theta_Lprior = lambda _lhp_target : 0 if np.all(_lhp_target>np.log(0.1)) and np.all(_lhp_target<np.log(10)) else np.NINF
     ):
@@ -13,43 +14,48 @@ def update_theta_simple(theta, ff, Lfn, Ufn,
     update to GP hyperparam. slice sample theta| f, data. Does not update f, so requires separate procedure to update f (eg elliptical slice sampling).
     """
 
-    U = Ufn(theta)
+    #L = Lfn(theta)
 
     # Slice sample theta|ff
     class particle:
         pass
     particle.pos = theta
     particle.ff = ff
-    slice_fn = lambda pp, Lpstar_min : eval_particle_simple(pp, Lfn, theta_Lprior, Lpstar_min, Ufn)
+    slice_fn = lambda pp, Lpstar_min : eval_particle_simple(pp, lik_fn, theta_Lprior, Lpstar_min, Lfn)
     slice_fn(particle, Lpstar_min = np.NINF)
     slice_sweep(particle, slice_fn, sigma = abs(slice_width), step_out = (slice_width > 0))
-    return (particle.pos, particle.ff, particle.Lfn_ff) # could return U !? so you don't have to recompute it ?
+    return (particle.pos, particle.ff, particle.lik_fn_ff) # could return L !? so you don't have to recompute it ?
 
 
-def eval_particle_simple(pp, Lfn, theta_Lprior, Lpstar_min, Ufn): # should not need to return particle, can modify in-place
+def eval_particle_simple(pp, lik_fn, theta_Lprior, Lpstar_min, 
+    Lfn # lower chol
+    ): # should not need to return particle, can modify in-place
     """
     pp modified in place
-    U is a precomputed chol(Kfn(pp.pos))
-    alternatively, Ufn is a function that will compute U
+    L is a precomputed chol(Kfn(pp.pos))
+    alternatively, Lfn is a function that will compute L
     """
 
     Ltprior = theta_Lprior(pp.pos)
-    if Ltprior == np.NINF: # save time in case Ltprior is NINF, don't need to run Ufn
+    if Ltprior == np.NINF: # save time in case Ltprior is NINF, don't need to run Lfn
         #print('off slice cos prior limit hit')
         pp.Lpstar = Ltprior
         pp.on_slice = False
         return 
-    U = Ufn(pp.pos)
-    L_inv_f = U.T_solve(pp.ff) # equivalent of L.solve. NB all my U variables are actually lower triangular and should be renamed!
-    Lfprior = -0.5 * L_inv_f.T.dot(L_inv_f) - U.diag_log_sum(); # + const 
-    # log(p(f|theta)) = log(N(pp.ff ; 0, U_theta)) = -1/2 f.T (U.T.dot(U))^1 f - log(sqrt(2 * pi * det(U.T.dot(U)))) 
+    L = Lfn(pp.pos) # L = lower chol K_theta
+    L_inv_f = L.solve(pp.ff) # equivalent of L.solve
+    Lfprior = -0.5 * L_inv_f.T.dot(L_inv_f) - L.diag_log_sum(); # + const # this is log p(f|theta)
+    # log(p(f|theta)) = log(N(pp.ff ; 0, U_theta)) = -1/2 f.T (L.T.dot(L))^1 f - log(sqrt(2 * pi * det(L.T.dot(L)))) 
 
-    pp.Lfn_ff = Lfn(pp.ff)
-    pp.Lpstar = pp.Lfn_ff + Lfprior + Ltprior # p(x|f) + p(f|theta) + p(theta)
+    pp.lik_fn_ff = lik_fn(pp.ff)
+    pp.Lpstar = pp.lik_fn_ff + Lfprior + Ltprior # log p(x|f) + log p(f|theta) + log p(theta)
     pp.on_slice = (pp.Lpstar >= Lpstar_min)
-    pp.U = U
+    #pp.L = L
     
-def update_theta_aux_chol(theta, ff, Lfn, Ufn, 
+# PRIOR WHITENING METHOD
+
+def update_theta_aux_chol(theta, ff, lik_fn, 
+    Lfn, # lower chol
     slice_width=10, 
     theta_Lprior = lambda _lhp_target : np.log((np.all(_lhp_target>np.log(0.1)) and np.all(_lhp_target<np.log(10))))
     ):
@@ -57,23 +63,25 @@ def update_theta_aux_chol(theta, ff, Lfn, Ufn,
     update to GP hyperparam. Fixes nu used to draw f, rather than f itself
     """
 
-    U = Ufn(theta)
-    nu = U.T_solve(ff)
+    L = Lfn(theta)
+    nu = L.T_solve(ff)
 
     # Slice sample theta|nu
     class particle:
         pass
     particle.pos = theta
-    slice_fn = lambda pp, Lpstar_min : eval_particle_aux_chol(pp, nu, Lfn, theta_Lprior, Lpstar_min, Ufn)
+    slice_fn = lambda pp, Lpstar_min : eval_particle_aux_chol(pp, nu, lik_fn, theta_Lprior, Lpstar_min, Lfn)
     slice_fn(particle, Lpstar_min = np.NINF)
     slice_sweep(particle, slice_fn, sigma = abs(slice_width), step_out = (slice_width > 0))
-    return (particle.pos, particle.ff, particle.Lfn_ff)
+    return (particle.pos, particle.ff, particle.lik_fn_ff)
 
-def eval_particle_aux_chol(pp, nu, Lfn, theta_Lprior, Lpstar_min, Ufn): # should not need to return particle, can modify in-place
+def eval_particle_aux_chol(pp, nu, lik_fn, theta_Lprior, Lpstar_min, 
+    Lfn # lower chol
+    ): # should not need to return particle, can modify in-place
     """
     pp modified in place
-    U is a precomputed chol(Kfn(pp.pos))
-    alternatively, Ufn is a function that will compute U
+    L is a precomputed chol(Kfn(pp.pos))
+    alternatively, Lfn is a function that will compute L
     """
 
     Ltprior = theta_Lprior(pp.pos)
@@ -81,13 +89,13 @@ def eval_particle_aux_chol(pp, nu, Lfn, theta_Lprior, Lpstar_min, Ufn): # should
         pp.on_slice = False
         pp.Lpstar = np.NINF
         return
-    U = Ufn(pp.pos)
-    ff = U.T_dot(nu) # ff = np.dot(nu.T,U).T
+    L = Lfn(pp.pos)
+    ff = L.T_dot(nu) # ff = np.dot(nu.T,L).T
 
-    pp.Lfn_ff = Lfn(ff)
-    pp.Lpstar = Ltprior + pp.Lfn_ff
+    pp.lik_fn_ff = lik_fn(ff)
+    pp.Lpstar = Ltprior + pp.lik_fn_ff
     pp.on_slice = (pp.Lpstar >= Lpstar_min)
-    pp.U = U
+    pp.L = L
     pp.ff = ff
 
 def slice_sweep(particle, slice_fn, sigma=1, step_out=True):# should not need to return particle, can modify in-place
@@ -132,6 +140,7 @@ def slice_sweep(particle, slice_fn, sigma=1, step_out=True):# should not need to
     # A random order (in hyperparameters) is more robust generally and important inside algorithms like nested sampling and AIS
     for (dd, x_cur) in enumerate(particle.pos):
         #print('working in param %s' % d)
+        # Lpstar_min is sampled so that pstar_min ~ U[0,pstar]
         Lpstar_min = particle.Lpstar + np.log(util.read_randoms(1, 'u')[0]) # take [0] to make scalar
         #print('particle.on_slice? %g' % particle.on_slice)
         # % Create a horizontal interval (x_l, x_r) enclosing x_cur
@@ -143,11 +152,11 @@ def slice_sweep(particle, slice_fn, sigma=1, step_out=True):# should not need to
             particle.pos[dd] = x_l
             while True:
                 slice_fn(particle, Lpstar_min)
-            #    print('on-slice %g is (particle.Lpstar = %g >= Lpstar_min = %g)' % (particle.on_slice, particle.Lpstar, Lpstar_min))
+                #print('on-slice %g is (particle.Lpstar = %g >= Lpstar_min = %g)' % (particle.on_slice, particle.Lpstar, Lpstar_min))
                 if not particle.on_slice:
                     break
                 particle.pos[dd] = particle.pos[dd] - sigma
-            #print('placed x_l, now stepping out right')
+            #print('placed x_l = %g, now stepping out right' % x_l)
             x_l = particle.pos[dd]
             particle.pos[dd] = x_r
             while True:
@@ -155,7 +164,7 @@ def slice_sweep(particle, slice_fn, sigma=1, step_out=True):# should not need to
                 if not particle.on_slice:
                     break
                 particle.pos[dd] = particle.pos[dd] + sigma
-            #print('placed x_r, particle.on_slice? %g' % particle.on_slice)
+            #print('placed x_r = %g, particle.on_slice? %g' % (x_r, particle.on_slice))
 
             x_r = particle.pos[dd]
 
@@ -174,9 +183,8 @@ def slice_sweep(particle, slice_fn, sigma=1, step_out=True):# should not need to
                 elif particle.pos[dd] < x_cur:
                     x_l = particle.pos[dd]
                 else:
-                    print(x_cur)
-                    print(particle.pos[dd])
-                    print(x_cur == particle.pos[dd])
+                    print("back to current position %f (x_cur==particle.pos[d])" % x_cur)
+                    print("Lpstar_min = %.15g" % Lpstar_min)
                     # check that current position is on slice
                     particle.pos[dd] = x_cur
                     slice_fn(particle, Lpstar_min)
@@ -186,15 +194,15 @@ def slice_sweep(particle, slice_fn, sigma=1, step_out=True):# should not need to
 
 # SURROGATE DATA METHOD
 
-def update_theta_aux_surr(theta, ff, Lfn, Kfn, theta_Lprior, slice_width=10, aux=0.1):
+def update_theta_aux_surr(theta, ff, lik_fn, Kfn, theta_Lprior, slice_width=10, aux=0.1):
 # %UPDATE_THETA_AUX_SURR MCMC update to GP hyper-param based on aux. noisy vars
 # %
-# %     [theta, ff] = update_theta_aux_noise(theta, ff, Lfn, Kfn, aux, theta_Lprior);
+# %     [theta, ff] = update_theta_aux_noise(theta, ff, lik_fn, Kfn, aux, theta_Lprior);
 # %
 # % Inputs:
 # %             theta Kx1 hyper-parameters (can be an array of any size)
 # %                ff Nx1 apriori Gaussian values
-# %               Lfn @fn Log-likelihood function, Lfn(ff) returns a scalar
+# %               lik_fn @fn Log-likelihood function, lik_fn(ff) returns a scalar
 # %               Kfn @fn Kfn(theta) returns NxN covariance matrix
 # %                       NB: this should contain jitter (if necessary) to
 # %                       ensure the result is positive definite.
@@ -264,7 +272,7 @@ def update_theta_aux_surr(theta, ff, Lfn, Kfn, theta_Lprior, slice_width=10, aux
     theta_changed(pp)
 
     # Instantiate g|f
-    pp.gg = ff + np.random.randn((pp.size_f)) * pp.aux_std
+    pp.gg = ff + util.read_randoms(pp.size_f, 'u') * pp.aux_std
     pp.Sinv_g = pp.gg / pp.aux_var
 
     # Instantiate nu|f,gg
@@ -276,9 +284,9 @@ def update_theta_aux_surr(theta, ff, Lfn, Kfn, theta_Lprior, slice_width=10, aux
 
 
     # Slice sample update of theta|g,nu
-    slice_fn = lambda pp, Lpstar_min : eval_particle_aux_surr(pp, Lpstar_min, Lfn, theta_Lprior)
+    slice_fn = lambda pp, Lpstar_min : eval_particle_aux_surr(pp, Lpstar_min, lik_fn, theta_Lprior)
     # Compute current log-prob (up to constant) needed by slice sampling:
-    eval_particle_aux_surr(pp, np.NINF, Lfn, theta_Lprior, theta_unchanged = True) # theta hasn't moved yet, don't recompute covariances
+    eval_particle_aux_surr(pp, np.NINF, lik_fn, theta_Lprior, theta_unchanged = True) # theta hasn't moved yet, don't recompute covariances
     assert(pp.on_slice)
     if False:
         print("after eval_particle_aux_surr")
@@ -289,8 +297,8 @@ def update_theta_aux_surr(theta, ff, Lfn, Kfn, theta_Lprior, slice_width=10, aux
 
     slice_sweep(pp, slice_fn, sigma = abs(slice_width), step_out = (slice_width > 0))
     #print(pp.pos)
-    #print(pp.Lfn_ff)
-    return (pp.pos, pp.ff, pp.Lfn_ff)
+    #print(pp.lik_fn_ff)
+    return (pp.pos, pp.ff, pp.lik_fn_ff)
     
     # optional outputs, not doing yet
     # if iscell(aux)
@@ -304,7 +312,9 @@ def update_theta_aux_surr(theta, ff, Lfn, Kfn, theta_Lprior, slice_width=10, aux
 def theta_changed(pp):
     """ Will call after changing hyperparameters to update covariances and their decompositions."""
     theta = pp.pos;
+    #print(theta)
     K = pp.Kfn(theta); # TODO for v1, cannot use compact representation
+    #print(K.gram_unary[:5,:5])
     # if pp.adapt_aux
         # if pp.adapt_aux == 1
             # pp.aux_std = pp.aux_fn(theta, K);
@@ -315,15 +325,23 @@ def theta_changed(pp):
         # pp.Sinv_g = pp.gg ./ pp.aux_var;
     # end
     pp.U = K.cholesky_T() # Matlab chol(K);
+    #print(pp.U.gram_unary[:5,:5])
 	# Matlab chol(K) = upper Cholesky = lower Cholesky transpose = np.linalg.cholesky(K).T
     # pp.iK = inv(K)
     pp.U_invR = K.inv_add_diag_cholesky_T(1/pp.aux_var) # Matlab chol(plus_diag(pp.iK, 1./pp.aux_var));
 	# %pp.U_noise = chol(plus_diag(K, aux_var_vec));
+    assert_triu(pp.U)
+    assert_triu(pp.U_invR)
 
-def eval_particle_aux_surr(pp, Lpstar_min, Lfn, theta_Lprior, theta_unchanged = False):
-
+def assert_triu(a):
+    import numpy.testing
+    numpy.testing.assert_almost_equal(a.gram_unary, np.triu(a.gram_unary))
+    
+def eval_particle_aux_surr(pp, Lpstar_min, lik_fn, theta_Lprior, theta_unchanged = False):
+    #print("calling eval particle, theta_unchanged=%g" % theta_unchanged)
     # Prior on theta
     Ltprior = theta_Lprior(pp.pos)
+    #    print(Ltprior)
     if Ltprior == np.NINF:
         pp.on_slice = False
         pp.Lpstar = np.NINF
@@ -332,23 +350,35 @@ def eval_particle_aux_surr(pp, Lpstar_min, Lfn, theta_Lprior, theta_unchanged = 
         theta_changed(pp)
 
     # Update f|gg,nu,theta
-    pp.ff = pp.U_invR.solve(pp.nu) + pp.U_invR.solve(pp.Sinv_g) # pp.U_invR\pp.nu + solve_chol(pp.U_invR, pp.Sinv_g);
-	# solve_chol really means "solve knowing that matrix is triangular", but doesn't affect the matrices
+    pp.ff = pp.U_invR.solve(pp.nu) + pp.U_invR.T().solve_cholesky_lower(pp.Sinv_g) # pp.U_invR\pp.nu + solve_chol(pp.U_invR, pp.Sinv_g);
 
     # % Compute joint probability and slice acceptability.
     # % I have dropped the constant: -0.5*length(pp.gg)*log(2*pi)
     # %Lgprior = -0.5*(pp.gg'*solve_chol(pp.U_noise, pp.gg)) - sum(log(diag(pp.U_noise)));
-    # %pp.Lpstar = Ltprior + Lgprior + Lfn(pp.ff);
+    # %pp.Lpstar = Ltprior + Lgprior + lik_fn(pp.ff);
     # %
     # % This version doesn't need U_noise, but commenting out the U_noise line and
     # % using this version doesn't actually seem to be faster?
-    Lfprior = -0.5 * pp.ff.T.dot(pp.U.solve(pp.ff)) - pp.U.diag_log_sum() #-0.5*(pp.ff'*solve_chol(pp.U, pp.ff)) - sum(log(diag(pp.U)));
+    Lfprior = -0.5 * pp.ff.T.dot(pp.U.T().solve_cholesky_lower(pp.ff)) - pp.U.diag_log_sum() #-0.5*(pp.ff'*solve_chol(pp.U, pp.ff)) - sum(log(diag(pp.U)));
     LJacobian = - pp.U_invR.diag_log_sum() # -sum(log(diag(pp.U_invR)));
 #    %LJacobian = sum(log(diag(pp.U_R)));
     Lg_f = -0.5 * np.sum((pp.gg - pp.ff) ** 2) / pp.aux_var - np.sum(np.log(pp.aux_var * np.ones(pp.ff.shape[0]))) #-0.5*sum((pp.gg - pp.ff).^2)./pp.aux_var - sum(log(pp.aux_var.*ones(size(pp.ff))));
-    pp.Lfn_ff = Lfn(pp.ff)
-    pp.Lpstar = Ltprior + Lg_f + Lfprior + pp.Lfn_ff + LJacobian
+    pp.lik_fn_ff = lik_fn(pp.ff)
+    pp.Lpstar = Ltprior + Lg_f + Lfprior + pp.lik_fn_ff + LJacobian
     # log p(theta) + log p(g|f) + log p(f|theta) + log p(x|f) + log p()
     pp.on_slice = (pp.Lpstar >= Lpstar_min)
     if False:
-        print('particle on slice? %g, pp.Lpstar = %g, Lpstar_min = %g' % (pp.on_slice, pp.Lpstar, Lpstar_min))
+        print('particle on slice? %g, pp.Lpstar = %g, Lpstar_min = %g. Ltprior = %g, Lg_f=%g, Lfprior=%g, lik_fn_ff=%g, LJacobian=%g. pp.U.diag_log_sum()=%g' % (pp.on_slice, pp.Lpstar, Lpstar_min, Ltprior, Lg_f, Lfprior, pp.lik_fn_ff, LJacobian, pp.U.diag_log_sum()))
+        #return np.array([pp.Lpstar, Ltprior, Lg_f, Lfprior, pp.lik_fn_ff, LJacobian])
+        
+"""
+OPTIMIZING SURROGATE DATA
+• can carry out further algebraic simplifications entirely in Python (unit tests use only Python code)
+	• extract gram_compact and *_aux_surr into own file v1
+	• start doing transformations to code: v2. in unit test, check that results and if possible intermediate results are identical to v1. inform the transformations with algebra. write down algebra and derivations in script, no latex. try reduce the number of methods used in gram_compact.
+	• the last working version will be duplicated, minus the unit tests, into resp. gram_compact.py and slice_spl_hp.py
+• TODO other performance tricks
+	-  avoid recomputing p everytime we recompute the unary kernel, cache! to do that, must somehow identify which of (train, train) (train, trest) (test, test) we've been asked to compute -- how ?? prepapre the 3 types on function initialization ? -- however, this is not useful for the ARD kernel, cos there we can't avoid recomputing the kernel on each point
+	- cache nu for a given (f, kernel) (nu was known inside ESS or inside sample from kernel)
+
+"""

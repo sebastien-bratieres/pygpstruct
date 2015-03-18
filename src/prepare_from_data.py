@@ -70,7 +70,9 @@ def log_likelihood_dataset(f, dataset, log_likelihood_datapoint, ll_fun_wants_lo
 #        print(dataset.unaries[n][:5,:5,0])
 #        print(log_node_pot[:5,:5,0])
         #assert(log_node_pot.shape == (dataset.object_size, dataset.object_size, dataset.n_labels))
-        
+        #print(node_pot.dtype)
+        #print(edge_pot.dtype)
+        #print(dataset.Y[n].dtype)
         ll_datapoint = log_likelihood_datapoint(node_pot, edge_pot, dataset.Y[n], dataset.object_size[n], dataset.n_labels) 
         # if (ll_datapoint >0):
             # info_string = ""

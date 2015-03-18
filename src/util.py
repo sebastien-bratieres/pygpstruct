@@ -15,7 +15,7 @@ class memoize_once(dict):
             return result
             
 import learn_predict
-def read_randoms(n=-1, type=None, should=None, true_random_source=True):
+def read_randoms(n=-1, type=None, should=None):
     """
     to intialize this function:
     read_randoms.offset=0 #DEBUG
@@ -25,8 +25,7 @@ def read_randoms(n=-1, type=None, should=None, true_random_source=True):
     - a PRNG
     - a file where a sequence of such PRN is stored (to allow reusing the same random sequence between Matlab and Python, in my case)
     """
-    global dtype
-    if true_random_source:
+    if not hasattr(read_randoms, 'file'):
         if type != None:
             if type=='u':
                 result=read_randoms.prng.rand(n)
@@ -46,7 +45,9 @@ def read_randoms(n=-1, type=None, should=None, true_random_source=True):
                 raise e
             
         read_randoms.offset = read_randoms.offset+n
-    return learn_predict.dtype_for_arrays(result)
+        if n == 1:
+            print("read random number %g" % result)
+    return result.astype(learn_predict.dtype_for_arrays)
 
 
 import time
@@ -158,3 +159,52 @@ def make_figure(data_col_list, file_pattern_list, bottom=None, top=None, max_dis
             import matplotlib
             matplotlib.rcParams['pdf.fonttype'] = 42 # to avoid PDF Type 3 fonts in resulting plots, cf http://www.phyletica.com/?p=308
             fig.savefig('figure.pdf',bbox_inches='tight');
+            
+# effective sample size function, from https://code.google.com/p/biopy/source/browse/trunk/biopy/bayesianStats.py
+def effective_sample_size(data, stepSize = 1) :
+  """ Effective sample size, as computed by BEAST Tracer."""
+  samples = len(data)
+
+  assert len(data) > 1,"no stats for short sequences"
+  
+  maxLag = min(samples//3, 1000)
+
+  gammaStat = [0,]*maxLag
+  #varGammaStat = [0,]*maxLag
+
+  varStat = 0.0;
+
+  if type(data) != np.ndarray :
+    data = np.array(data)
+
+  normalizedData = data - data.mean()
+  
+  for lag in range(maxLag) :
+    v1 = normalizedData[:samples-lag]
+    v2 = normalizedData[lag:]
+    v = v1 * v2
+    gammaStat[lag] = sum(v) / len(v)
+    #varGammaStat[lag] = sum(v*v) / len(v)
+    #varGammaStat[lag] -= gammaStat[0] ** 2
+
+    # print lag, gammaStat[lag], varGammaStat[lag]
+    
+    if lag == 0 :
+      varStat = gammaStat[0]
+    elif lag % 2 == 0 :
+      s = gammaStat[lag-1] + gammaStat[lag]
+      if s > 0 :
+         varStat += 2.0*s
+      else :
+        break
+      
+  # standard error of mean
+  # stdErrorOfMean = Math.sqrt(varStat/samples);
+
+  # auto correlation time
+  act = stepSize * varStat / gammaStat[0]
+
+  # effective sample size
+  ess = (stepSize * samples) / act
+
+  return ess

@@ -12,8 +12,17 @@ import glob
 import slice_sample_hyperparameters
 import util
 import kernels
+import copy
 
 dtype_for_arrays=np.float32
+
+# def default_set_lhp_target(lhp_, lhp_target):
+    # new_lhp = copy.deepcopy(lhp_)
+    # new_lhp["unary"] = lhp_target[0]
+    # new_lhp["binary"] = lhp_target[1]
+    # return new_lhp
+# def default_get_lhp_target(lhp_):
+    # return np.array([lhp_["unary"], lhp_["binary"]], dtype=learn_predict.dtype_for_arrays)
     
 def learn_predict_gpstruct( prepare_from_data,
                             result_prefix=None, 
@@ -23,10 +32,12 @@ def learn_predict_gpstruct( prepare_from_data,
                             prediction_verbosity=None,
                             n_f_star=0, 
                             hp_sampling_thinning=1, 
-                            hp_sampling_mode=None, 
-                            prior=1, 
-                            lhp_update={}, # defaults are     lhp = {'unary': np.log(1), 'binary': np.log(0.01), 'length_scale': np.log(8), 'jitter' : np.log(1e-4)}
-                            kernel=kernels.kernel_exponential_unary,
+                            hp_sampling_mode=None,
+                            lhp_gset = None, #(default_get_lhp_target, default_set_lhp_target),
+                            prior=1,
+                            lhp_init={'unary': np.log(1), 'binary': np.log(0.01), 'jitter' : np.log(1e-4)},
+                            lhp_update = None,
+                            kernel=kernels.kernel_exponential,
                             random_seed=0,
                             stop_check=None, 
                             hp_debug=False
@@ -34,7 +45,7 @@ def learn_predict_gpstruct( prepare_from_data,
     """
     result_prefix should end with the desired character to allow result_prefix + string constructions:
     end in / for directory: will put files into result_prefix directory
-    end in . for file prefix (ie result_prefix = result_dir + '/' + file_prefix: will put files into result_dir, with filenames prefixed with file_prefix
+    end in . for file prefix (ie result_prefix = result_dir + '/' + file_prefix: will put files into result_dir, with filenames prefixed with file_prefix (Note: util.run_job depends on this)
     
     # n_samples: # f samples, ie # of MCMC iterations
     # prediction_thinning: #samples f (MCMC iterations) after which to compute f* and p(y*) - eg 1 or 10 (the f samples which are not used here are thrown away)
@@ -43,11 +54,9 @@ def learn_predict_gpstruct( prepare_from_data,
     # hp_mode: 0 for no hp sampling, 1 for prior whitening, 2 for surrogate
     %   data/null aux
     % prior: 1 for narrow, 2 for wide uniform prior
-    default hyperparameters:     lhp = {'unary': np.log(1), 'binary': np.log(0.01), 'length_scale': np.log(8), 'jitter' : np.log(1e-4)}
-    lhp_update will update these hyperparameters, to yield the (initial) log hyperparameters (which might get updated when hp sampling kicks in)
+    lhp_update (deprecated) will update the default hyperparameters, to yield the (initial) log hyperparameters (which might get updated when hp sampling kicks in)
 
     """
-    global dtype
     function_args = locals() # store just args passed to function, so as to log them later on
     
     ## test for hotstart
@@ -91,9 +100,10 @@ def learn_predict_gpstruct( prepare_from_data,
 
     if (stop_check == None):
         stop_check = lambda : None # equivalent to pass
-    results = []
     util.read_randoms.offset=0 #DEBUG
     #read_randoms.file = np.loadtxt('/tmp/sb358/ess_randoms.txt') #DEBUG
+    (get_lhp_target, set_lhp_target) = lhp_gset # for readability
+
 
     (ll_train, 
      posterior_marginals_test, 
@@ -116,12 +126,6 @@ def learn_predict_gpstruct( prepare_from_data,
     # prepare kernel matrix
     logger.debug("prepare kernel matrices")
 
-    # override default hyperparameters with argument lhp_update
-    lhp = {'unary': np.log(1), 'binary': np.log(0.01), 'length_scale': np.log(8), 'jitter' : np.log(1e-4)}
-    lhp.update(lhp_update)
-    compute_kernels = lambda lhp : kernels.compute_kernels_from_data(kernel, lhp, X_train, X_test, n_labels)
-    (lower_chol_k_compact, k_star_T_k_inv) = compute_kernels(lhp)
-    
     logger.debug("start MCMC chain")
     if (prediction_verbosity != None):
         prediction_at = np.round(np.linspace(start=0, stop=n_samples-1, num=prediction_verbosity))
@@ -137,70 +141,82 @@ def learn_predict_gpstruct( prepare_from_data,
         current_ll_test = saved_state_dict['current_ll_test']
         avg_error = saved_state_dict['avg_error']
         avg_nlm = saved_state_dict['avg_nlm']
-        logger.info('hotstart from iteration %g, including stored random state' % mcmc_step)
+        lhp = saved_state_dict['lhp']
+        logger.info('hotstart from iteration %g, including stored random state. hotstart data = %s' % (mcmc_step, str(saved_state_dict)))
     else: # initialize state
         current_f = np.zeros(n_labels * TT_train + n_labels**2, dtype=dtype_for_arrays)
         mcmc_step=0
         util.read_randoms.prng = np.random.RandomState(random_seed)
+        if (lhp_update != None):
+            # override default hyperparameters with argument lhp_update
+            import warnings
+            warnings.warn("shouldn't use lhp_update, use lhp_init instead, declaring all of your desired log hyperparameters")
+            lhp = {'unary': np.log(1), 'binary': np.log(0.01), 'length_scale': np.log(8), 'jitter' : np.log(1e-4)}
+            lhp.update(lhp_update)
+        else:
+            lhp = lhp_init
         # no need to initialize other variables, since they will be computed during prediction, since we are starting from iteration 0 (for which we are sure prediction will happen)
+
+    # we're now sure lhp has been defined or read off hotstart
+    lower_chol_k_compact = kernels.compute_lower_chol_k(kernel, lhp, X_train, n_labels)
 
     if hp_debug:
         history_f = np.ones((n_samples, current_f.shape[0]))*4 # flag
         history_ll = np.ones((n_samples)) * 4
         history_hp = []
-        
+
     # ---------------- MCMC loop 
     while not stop_check() and (mcmc_step < n_samples or n_samples == 0):
         if hp_debug:
             history_f[mcmc_step, :] = current_f
             history_ll[mcmc_step] = ll_train(current_f)
-            import copy
             history_hp.append(copy.deepcopy(lhp))
         if not (hp_sampling_mode == None) and (mcmc_step > 0) and np.mod(mcmc_step, hp_sampling_thinning) == 0 :
-            def update_lhp(lhp, variances): 
-                """
-                update lhp in-place, and return them
-                """
+            """
+            def update_lhp_AFAC(lhp, variances): 
                 lhp['variances'] = variances
                 return lhp
+            """                
+            def Lfn(lhp_target):
+                lhp_ = set_lhp_target(lhp, lhp_target)
+                return kernels.compute_lower_chol_k(kernel, lhp_, X_train, n_labels)
+            Lfn = util.memoize_once(Lfn)
+            def Kfn(lhp_target):
+                L = Lfn(lhp_target)
+                return kernels.gram_compact(gram_unary = L.gram_unary.dot(L.gram_unary.T), gram_binary_scalar = L.gram_binary_scalar ** 2, n_labels = L.n_labels)
+            Kfn = util.memoize_once(Kfn)
+            # lhp_target are the "interesting" log hyperparameters, eg the variances
             if (hp_sampling_mode == 'slice sample theta'):
                 (lhp_target, current_f, current_ll_train) = slice_sample_hyperparameters.update_theta_simple(
-                    theta = lhp['variances'], 
+                    theta = get_lhp_target(lhp), # starting values 
                     ff = current_f, 
-                    Lfn = ll_train, 
-                    Ufn = util.memoize_once(lambda _lhp_target : kernels.gram_compact(np.linalg.cholesky(kernel(X_train, X_train, update_lhp(lhp, _lhp_target), no_jitter=False)), 
-                                                                                      np.sqrt(np.exp(lhp["binary"])),
-                                                                                      n_labels)),
+                    lik_fn = ll_train, 
+                    # inside Ufn, create a deep copy of lhp to generate U with given _lhp_target, cos we don't want to affect lhp in this ESS loop
+                    Lfn = Lfn,
                     theta_Lprior = lambda _lhp_target : 0 if (np.all(_lhp_target>np.log(1e-3)) and np.all(_lhp_target<np.log(1e2))) else np.NINF,
                     )
-                update_lhp(lhp, lhp_target) # should be already done because particle.pos (mutable) is updated in-place
             elif (hp_sampling_mode == 'prior whitening'):
                 (lhp_target, current_f, current_ll_train) = slice_sample_hyperparameters.update_theta_aux_chol(
-                    theta = lhp['variances'], 
+                    theta = get_lhp_target(lhp), # starting values 
                     ff = current_f, 
-                    Lfn = ll_train, 
-                    Ufn = util.memoize_once(lambda _lhp_target : kernels.gram_compact(np.linalg.cholesky(kernel(X_train, X_train, update_lhp(lhp, _lhp_target), no_jitter=False)), 
-                                                                                      np.sqrt(np.exp(lhp["binary"])),
-                                                                                      n_labels)),
+                    lik_fn = ll_train, 
+                    Lfn = Lfn,
                     theta_Lprior = lambda _lhp_target : 0 if (np.all(_lhp_target>np.log(1e-3)) and np.all(_lhp_target<np.log(1e2))) else np.NINF,
                     )
-                update_lhp(lhp, lhp_target) # should be already done because particle.pos (mutable) is updated in-place
             elif (hp_sampling_mode == 'surrogate data'):
                 (lhp_target, current_f, current_ll_train) = slice_sample_hyperparameters.update_theta_aux_surr(
-                    theta = lhp['variances'], 
+                    theta = get_lhp_target(lhp), # starting values 
                     ff = current_f, 
-                    Lfn = ll_train, 
-                    Kfn = util.memoize_once(lambda _lhp_target : kernels.gram_compact(kernel(X_train, X_train, update_lhp(lhp, _lhp_target), no_jitter=False), 
-                                                                                      np.exp(lhp["binary"]),
-                                                                                      n_labels)),
+                    lik_fn = ll_train, 
+                    Kfn = Kfn,
                     theta_Lprior = lambda _lhp_target : 0 if (np.all(_lhp_target>np.log(1e-3)) and np.all(_lhp_target<np.log(1e2))) else np.NINF,
                     )
-                update_lhp(lhp, lhp_target) # should be already done because particle.pos (mutable) is updated in-place
             else:
-                raise Exception('hyperparameter sampling mode %s not supported; should be one of "prior whitening" or None.' % hp_sampling_mode)
+                raise Exception('hyperparameter sampling mode %s not supported; should be one of the supported methods or None.' % hp_sampling_mode)
             # recompute kernels and factors involving kernels
-            #logger.debug('lhp update: %s' % str(lhp))
-            (lower_chol_k_compact, k_star_T_k_inv) = compute_kernels(lhp)
+            lhp = set_lhp_target(lhp, lhp_target) # should be already done because particle.pos (mutable) is updated in-place
+            logger.debug('lhp update: %s' % str(lhp))
+            lower_chol_k_compact = kernels.compute_lower_chol_k(kernel, lhp, X_train, n_labels)
 
         current_f, current_ll_train = ess_k_sampler.ESS(current_f, ll_train, lower_chol_k_compact, util.read_randoms) 
         #read_randoms(should=current_f, true_random_source=False)
@@ -215,7 +231,7 @@ def learn_predict_gpstruct( prepare_from_data,
 
             #logger.debug("start prediction it %g" % mcmc_step)
             # compute mean of f*|D - this involves f (expanded) and k_star_T_k_inv_unary (compact), so need to iterate over n_labels
-            f_star_mean = k_star_T_k_inv.dot(current_f)
+            f_star_mean = kernels.compute_k_star_T_k_inv(kernel, lhp, X_train, X_test, n_labels, lower_chol_k_compact).dot(current_f)
             if n_f_star == 0:
                 marginals_f = posterior_marginals_test(f_star_mean)
             # else:
@@ -292,7 +308,6 @@ def learn_predict_gpstruct( prepare_from_data,
             
         mcmc_step += 1 # now ready for next iteration
         
-            
         # finally save results for this MCMC step (avg_error, avg_nlp unchanged from previous step in case no prediction occurred)
         with open(result_prefix + 'results.bin', 'ab') as results_file:
             last_results = np.array([current_ll_train, 
@@ -311,13 +326,23 @@ def learn_predict_gpstruct( prepare_from_data,
                          'current_error' : current_error, 
                          'current_ll_test' : current_ll_test,
                          'avg_error' : avg_error,
-                         'avg_nlm' : avg_nlm}, 
+                         'avg_nlm' : avg_nlm,
+                         'lhp' : lhp}, 
                          random_state_file)
+        
+        # save debug information if required
+        if hp_debug:
+            #print(current_f.dtype)
+            #print(get_lhp_target(lhp).dtype)
+            with open(result_prefix + 'history_f.bin', 'ab') as history_f_file:
+                current_f.tofile(history_f_file) # file format = row-wise array, shape #mcmc steps, len f
+            with open(result_prefix + 'history_hp.bin', 'ab') as history_hp_file:
+                get_lhp_target(lhp).tofile(history_hp_file) # file format = row-wise array, shape #mcmc steps, len lhp_target
     fh.close()
-    if hp_debug:
-        return (lower_chol_k_compact, history_f, history_ll, history_hp)
+#    if hp_debug:
+#        return (lower_chol_k_compact, history_f, history_ll, history_hp)
         
 # LATER
 # - separate learning (write marginals to disk) 
 #    from prediction (read, skipping burnin, applying extra thinning, and compute errors)
-# - f* vs f* MAP
+# - f* samples vs f* MAP

@@ -3,16 +3,16 @@ import learn_predict
 import scipy
 
 import scipy.sparse.csr
-def kernel_linear_unary(X_train, X_test, lhp, no_jitter):
+def kernel_linear(X_train, X_test, lhp, no_jitter):
     global dtype
     p = np.dot(X_train,X_test.T)
     if isinstance(p, scipy.sparse.csr.csr_matrix):
         p = p.toarray() # cos if using X_train sparse vector, p will be a csr_matrix -- incidentally in this case the resulting k_unary cannot be flattened, it will result in a (1,X) 2D matrix !
-    k_unary = np.exp(lhp["unary"]) * np.array(p, dtype=learn_predict.dtype_for_arrays)
+    k_unary = np.array(p, dtype=learn_predict.dtype_for_arrays)
     return jitterize(k_unary, lhp, no_jitter)
     
 import sklearn.metrics.pairwise
-def kernel_exponential_unary(X_train, X_test, lhp, no_jitter):
+def kernel_exponential(X_train, X_test, lhp, no_jitter):
     """
     $k_\text{exponential}(\mathbf{x},\mathbf{x'}) = \exp({-\frac{1}{2 \ell ^2} \Vert \mathbf{x} - \mathbf{x'} \Vert ^2})$  
     $k_\text{exponential ARD}(\mathbf{x},\mathbf{x'}) = \exp({-\frac{1}{2} \sum_i \frac{1}{\sigma_i ^2} ( \mathbf{x}_i - \mathbf{x'}_i ) ^2})$  
@@ -23,7 +23,7 @@ def kernel_exponential_unary(X_train, X_test, lhp, no_jitter):
     # but works with Scipy sparse and Numpy dense arrays
     # I thought it would be equal to X_train.dot(X_train.T) + X_test.dot(X_test.T) - X_train.dot(X_test.T) - X_test.dot(X_train.T))
     # but it doesnt seem to
-    k_unary = learn_predict.dtype_for_arrays(np.exp(lhp["unary"]) * np.exp( -(1/2) * 1/(np.exp(lhp["length_scale"])**2 ) * p))
+    k_unary = learn_predict.dtype_for_arrays(np.exp( -(1/2) * 1/(np.exp(lhp["length_scale"])**2 ) * p))
     return jitterize(k_unary, lhp, no_jitter)
 
 import scipy.spatial.distance
@@ -34,7 +34,7 @@ def kernel_exponential_ard(X_train, X_test, lhp, no_jitter):
     """
     global dtype
     p = scipy.spatial.distance.cdist(X_train, X_test, metric='mahalanobis', VI=np.diag(1/np.exp(lhp['variances'])))
-    k_unary = learn_predict.dtype_for_arrays(np.exp(lhp["unary"]) * np.exp( (-1/2) * np.square(p)))
+    k_unary = learn_predict.dtype_for_arrays(np.exp( (-1/2) * np.square(p)))
     return jitterize(k_unary, lhp, no_jitter)
 
 def jitterize(k_unary, lhp, no_jitter):
@@ -43,10 +43,52 @@ def jitterize(k_unary, lhp, no_jitter):
     else:
         return k_unary + (np.exp(lhp["jitter"])) * np.eye(k_unary.shape[0])
     
-def compute_kernels_from_data(kernel, lhp, X_train, X_test, n_labels):
+def compute_lower_chol_k(kernel, lhp, X_train, n_labels):
     k_unary = kernel(X_train, X_train, lhp, no_jitter=False)
 #    read_randoms(len(k_unary.flatten(order='F')), should=k_unary.flatten(order='F'), true_random_source=False) # DEBUG
-    lower_chol_k_compact = gram_compact(np.linalg.cholesky(k_unary), np.sqrt(np.exp(lhp["binary"])), n_labels)
+    if ("unary" in lhp and "binary" in lhp):
+        lower_chol_k_compact = gram_compact(np.linalg.cholesky(np.exp(lhp["unary"]) * k_unary), np.sqrt(np.exp(lhp["binary"])), n_labels)
+    elif ("alpha" in lhp and "lambda"in lhp):
+        lower_chol_k_compact = gram_compact(np.linalg.cholesky(np.exp(lhp["alpha"]) * k_unary), np.sqrt(np.exp(lhp["alpha"]) + ljp["gamma"]), n_labels)
+    else:
+        raise("Unknown parameterization for kernel")
+    return lower_chol_k_compact
+
+def compute_k_star_T_k_inv(kernel, lhp, X_train, X_test, n_labels, lower_chol_k_compact):
+    # NB no jitter for prediction; because no need to take chol or inv
+    '''
+    must compute S = K* ' K^-1, equivalent to S K = K*', ie K' S' = K*, ie K S' = K* (cos K sym)
+    x=solve(A,b) returns x solution of Ax=b
+    so solve(K, K*) gives S', hence need to transpose the result 
+    '''
+    k_star_unary = kernel(X_train, X_test, lhp, no_jitter=True)
+    k_unary = lower_chol_k_compact.gram_unary.dot(lower_chol_k_compact.gram_unary.T)
+    k_star_T_k_inv = gram_compact(np.linalg.solve(k_unary, k_star_unary).T, gram_binary_scalar=1, n_labels=n_labels)
+    # cancel out: the multiplicative factors hp_unary, hp_binary (not even considered in previous line)
+    
+    #read_randoms(should=k_star_T_k_inv_unary.ravel(order='F'), true_random_source=False) #DEBUG
+
+    #===========================================================================
+    #if (n_f_star > 0):
+    # % cholcov( k** - k*' K^-1 k* )
+    # lowerCholfStarCov = chol(exp(lhp(1)) * (X_test * X_test') ...
+    #     + noise_param * eye(TT_test) ... % jitter not needed in theory, but in practice needed for numerical stability of chol() operation
+    #     - k_star_T_k_inv_unary * kStar_unaryT')';
+    #===========================================================================
+    #del k_star_unary # not needed since we're in local scope anyway
+
+    return k_star_T_k_inv
+
+def compute_kernels_from_data_AFAC(kernel, lhp, X_train, X_test, n_labels):
+    k_unary = kernel(X_train, X_train, lhp, no_jitter=False)
+#    read_randoms(len(k_unary.flatten(order='F')), should=k_unary.flatten(order='F'), true_random_source=False) # DEBUG
+    if (lhp.has_key["unary"] and lhp.has_key["binary"]):
+        lower_chol_k_compact = gram_compact(np.linalg.cholesky(np.exp(lhp["unary"]) * k_unary), np.sqrt(np.exp(lhp["binary"])), n_labels)
+    elif (lhp.has_key["alpha"] and lhp.has_key["lambda"]):
+        lower_chol_k_compact = gram_compact(np.linalg.cholesky(np.exp(lhp["alpha"]) * k_unary), np.sqrt(np.exp(lhp["alpha"]) + ljp["gamma"]), n_labels)
+    else:
+        raise("Unknown parameterization for kernel")
+    
     # NB no jitter for prediction; because no need to take chol or inv
     '''
     must compute S = K* ' K^-1, equivalent to S K = K*', ie K' S' = K*, ie K S' = K* (cos K sym)
@@ -55,6 +97,7 @@ def compute_kernels_from_data(kernel, lhp, X_train, X_test, n_labels):
     '''
     k_star_unary = kernel(X_train, X_test, lhp, no_jitter=True)
     k_star_T_k_inv = gram_compact(np.linalg.solve(k_unary, k_star_unary).T, gram_binary_scalar=1, n_labels=n_labels)
+    # cancel out: the multiplicative factors hp_unary, hp_binary (not even considered in previous line)
     
     #read_randoms(should=k_star_T_k_inv_unary.ravel(order='F'), true_random_source=False) #DEBUG
 
@@ -86,10 +129,16 @@ class gram_compact():
             returns an expanded version of this object
         """
         l = [self.gram_unary]*self.n_labels # [k_unary, k_unary, ... k_unary], with length n_label
-        l.append(self.gram_binary_scalar * np.eye(n_labels **2))
+        l.append(self.gram_binary_scalar * np.eye(self.n_labels **2))
         return learn_predict.dtype_for_arrays(scipy.linalg.block_diag(*tuple(l)))
     
+    def T(self):
+        return gram_compact(self.gram_unary.T, self.gram_binary_scalar, self.n_labels)
+        
     def cholesky_T(self):
+        """
+        upper Cholesky
+        """
         try:
             return gram_compact(np.linalg.cholesky(self.gram_unary).T, np.sqrt(self.gram_binary_scalar), self.n_labels)
         except np.linalg.LinAlgError as  e:
@@ -97,8 +146,19 @@ class gram_compact():
             plt.matshow(self.gram_unary)
             print(self.gram_unary)
             raise e
+
+    def cholesky(self):
+        """
+        lower Cholesky
+        """
+        try:
+            return gram_compact(np.linalg.cholesky(self.gram_unary), np.sqrt(self.gram_binary_scalar), self.n_labels)
+        except np.linalg.LinAlgError as  e:
+            import matplotlib.pyplot as plt
+            plt.matshow(self.gram_unary)
+            print(self.gram_unary)
+            raise e
             
-    
     def T_solve(self, v):
         """
         equivalent forms of x = K.T_solve(v):
@@ -127,6 +187,26 @@ class gram_compact():
         result[self.n*self.n_labels:] = v[self.n*self.n_labels:] / self.gram_binary_scalar # binary section, should be length n_labels ** 2
         return result
     
+    @staticmethod
+    def solve_cholesky_lower_basic(L, v):
+        return np.linalg.solve(L.T, np.linalg.solve(L,v))
+        
+    def solve_cholesky_lower(self, v):
+        """
+        solve linear equations from the Cholesky factorization
+        "self" is assumed to be lower triangular
+        Solve A*X = B for X, where A is square, symmetric, positive definite. The input to the function is L the Cholesky decomposition of A and the matrix B.
+        L = A.cholesky()
+        X = L.solve_cholesky_lower(v) == A.solve(v) == L.solve(L.T_solve(v))
+        """
+        assert(v.shape[0] == (self.n_labels * self.n + self.n_labels ** 2))
+        np.testing.assert_array_almost_equal(self.gram_unary, np.tril(self.gram_unary)) # assert gram_unary is lower triangular
+        result = np.zeros((self.n_labels * self.n + self.n_labels ** 2), dtype=learn_predict.dtype_for_arrays)
+        for label in range(self.n_labels):
+            result[label * self.n : (label + 1) * self.n] = gram_compact.solve_cholesky_lower_basic(self.gram_unary, v[label*self.n : (label+1)*self.n])
+        result[self.n*self.n_labels:] = v[self.n*self.n_labels:] / (self.gram_binary_scalar ** 2) # binary section, should be length n_labels ** 2
+        return result
+        
     def dot_wrapper(self, v, A):
         assert(v.shape[0] == (self.n_labels * self.n + self.n_labels ** 2))
         result = np.zeros((self.n_labels * self.n_star + self.n_labels ** 2), dtype=learn_predict.dtype_for_arrays)
@@ -151,7 +231,7 @@ class gram_compact():
         
     def inv_add_diag_cholesky_T(self, scalar):
         """
-        K.inv_add_diag_cholesky_T(s) = Matlab lower_chol(K^-1 + diag(s))
+        K.inv_add_diag_cholesky_T(s) = Matlab upper chol(K^-1 + diag(s))
         """
         assert(self.n == self.n_star)
         K_inv = np.linalg.inv(self.gram_unary)
@@ -197,10 +277,42 @@ if __name__ == "__main__":
         np.linalg.solve(k_compact.expand(), v),
         gram_compact(k_unary, k_binary_scalar, n_labels).solve(v),
         decimal=5)
+    k_unary_lower = np.tril(learn_predict.dtype_for_arrays(np.random.rand(n, n))) # now lower triangular
+    L = gram_compact(k_unary_lower, np.sqrt(k_binary_scalar), n_labels)
+    A = gram_compact(k_unary_lower.dot(k_unary_lower.T), k_binary_scalar, n_labels)
+    
+    np.testing.assert_almost_equal(
+        L.expand(),
+        A.cholesky().expand())
+    
+    # check L * L.T == A
+    np.testing.assert_almost_equal(
+        L.expand().dot(L.expand().T),
+        A.expand(),
+        decimal=5)
+    
+    np.testing.assert_almost_equal(
+        L.solve_cholesky_lower(v),
+        L.T_solve(L.solve(v)),
+        decimal=5)
+    np.testing.assert_almost_equal(
+        A.solve(v),
+        np.linalg.solve(A.expand(), v),
+        decimal=5)
+
+    np.testing.assert_almost_equal(
+        np.linalg.solve(L.expand().T, np.linalg.solve(L.expand(), v)),
+        np.linalg.solve(A.expand(), v))
+    
+    np.testing.assert_almost_equal(
+        L.solve_cholesky_lower(v),
+        A.solve(v),
+        decimal=5)
     np.testing.assert_almost_equal(
         np.linalg.cholesky(k_compact.expand()).T,
         gram_compact(k_unary, k_binary_scalar, n_labels).cholesky_T().expand(),
         decimal=5)
+
     s = 7
     np.testing.assert_almost_equal(
         np.linalg.cholesky(np.linalg.inv(k_compact.expand()) 
@@ -223,10 +335,10 @@ if __name__ == "__main__":
                         np.exp(-1/2 * (1/2) * 3**2))
     X_train = np.array([[0,2]])
     X_test = np.array([[3,-5]])
-    np.testing.assert_approx_equal(kernel_exponential_ard(X_train, X_test, {'unary' : np.log(6), 'variances' : np.log([2, 5])}, no_jitter=True),
-                        6 * np.exp(-1/2 * ((1/2) * 3**2 + (1/5) * 7**2)))
+    np.testing.assert_approx_equal(kernel_exponential_ard(X_train, X_test, {'unary' : np.log(1), 'variances' : np.log([2, 5])}, no_jitter=True),
+                        np.exp(-1/2 * ((1/2) * 3**2 + (1/5) * 7**2)))
     np.testing.assert_approx_equal(
-        kernel_exponential_unary(X_train, X_test, {'unary': np.log(1), 'length_scale': np.log(7)}, no_jitter=True),
+        kernel_exponential(X_train, X_test, {'unary': np.log(1), 'length_scale': np.log(7)}, no_jitter=True),
         kernel_exponential_ard(X_train, X_test, {'unary': np.log(1), 'variances' : np.log([7**2, 7**2])}, no_jitter=True)
         )
         
