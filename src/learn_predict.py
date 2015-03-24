@@ -40,7 +40,7 @@ def learn_predict_gpstruct( prepare_from_data,
                             kernel=kernels.kernel_exponential,
                             random_seed=0,
                             stop_check=None, 
-                            hp_debug=False
+                            log_f=False
                             ):
     """
     result_prefix should end with the desired character to allow result_prefix + string constructions:
@@ -160,17 +160,9 @@ def learn_predict_gpstruct( prepare_from_data,
     # we're now sure lhp has been defined or read off hotstart
     lower_chol_k_compact = kernels.compute_lower_chol_k(kernel, lhp, X_train, n_labels)
 
-    if hp_debug:
-        history_f = np.ones((n_samples, current_f.shape[0]))*4 # flag
-        history_ll = np.ones((n_samples)) * 4
-        history_hp = []
 
     # ---------------- MCMC loop 
     while not stop_check() and (mcmc_step < n_samples or n_samples == 0):
-        if hp_debug:
-            history_f[mcmc_step, :] = current_f
-            history_ll[mcmc_step] = ll_train(current_f)
-            history_hp.append(copy.deepcopy(lhp))
         if not (hp_sampling_mode == None) and (mcmc_step > 0) and np.mod(mcmc_step, hp_sampling_thinning) == 0 :
             """
             def update_lhp_AFAC(lhp, variances): 
@@ -260,10 +252,11 @@ def learn_predict_gpstruct( prepare_from_data,
             current_ll_test = ll_test(f_star_mean)
             #read_randoms(1, should=scaled_ll_test, true_random_source=False) # DEBUG
             
+            # write last marginals to disk
             with open(result_prefix + "marginals.bin", 'ab') as marginals_file:
                 write_marginals(marginals_f, marginals_file)
 
-            # read marginals from disk
+            # read all past marginals from disk
             marginals_read = np.array([0]) # init to non-empty list
             with open(result_prefix + "marginals.bin", 'rb') as marginals_file:
                 all_marginals = read_marginals(marginals_file)
@@ -273,38 +266,22 @@ def learn_predict_gpstruct( prepare_from_data,
             #    - current_ll_test: log-likelihood of very last f*|D sample
             marginals_after_burnin = all_marginals[len(all_marginals)//3:]
             (avg_error, avg_nlm) = compute_error_nlm(average_marginals(marginals_after_burnin))
-            if not hp_debug:
-                logger.info(("ESS it %g -- " +
-                            "LL train | last f = %.5g -- " +
-                            "test set error | last f = %.5g -- " + 
-                            "LL test | last f = %.5g -- " + 
-                            "test set error (marginalized over f's)= %.5g -- " +
-                            "average per-atom negative log posterior marginals = %.5g") % 
-                            (mcmc_step, 
-                             current_ll_train,
-                             current_error, 
-                             current_ll_test,
-                             avg_error,
-                             avg_nlm
-                             )
-                            )
-            else:
-                logger.info(("ESS it %g -- " +
-                            "LL train | last f = %.5g -- " +
-                            "test set error | last f = %.5g -- " + 
-                            "LL test | last f = %.5g -- " + 
-                            "test set error (marginalized over f's)= %.5g -- " +
-                            "average per-atom negative log posterior marginals = %.5g -- " +
-                            "lhp = %s") % 
-                            (mcmc_step, 
-                             current_ll_train,
-                             current_error, 
-                             current_ll_test,
-                             avg_error,
-                             avg_nlm,
-                             str(lhp)
-                             )
-                            )
+            logger.info(("ESS it %g -- " +
+                        "LL train | last f = %.5g -- " +
+                        "test set error | last f = %.5g -- " + 
+                        "LL test | last f = %.5g -- " + 
+                        "test set error (marginalized over f's)= %.5g -- " +
+                        "average per-atom negative log posterior marginals = %.5g -- " +
+                        "lhp = %s") % 
+                        (mcmc_step, 
+                         current_ll_train,
+                         current_error, 
+                         current_ll_test,
+                         avg_error,
+                         avg_nlm,
+                         str(lhp)
+                         )
+                        )
             
         mcmc_step += 1 # now ready for next iteration
         
@@ -331,18 +308,16 @@ def learn_predict_gpstruct( prepare_from_data,
                          random_state_file)
         
         # save debug information if required
-        if hp_debug:
-            #print(current_f.dtype)
-            #print(get_lhp_target(lhp).dtype)
+        with open(result_prefix + 'history_hp.bin', 'ab') as history_hp_file:
+            get_lhp_target(lhp).tofile(history_hp_file) # file format = row-wise array, shape #mcmc steps, len lhp_target
+        if log_f:
             with open(result_prefix + 'history_f.bin', 'ab') as history_f_file:
                 current_f.tofile(history_f_file) # file format = row-wise array, shape #mcmc steps, len f
-            with open(result_prefix + 'history_hp.bin', 'ab') as history_hp_file:
-                get_lhp_target(lhp).tofile(history_hp_file) # file format = row-wise array, shape #mcmc steps, len lhp_target
     fh.close()
-#    if hp_debug:
-#        return (lower_chol_k_compact, history_f, history_ll, history_hp)
         
 # LATER
 # - separate learning (write marginals to disk) 
 #    from prediction (read, skipping burnin, applying extra thinning, and compute errors)
 # - f* samples vs f* MAP
+# - refactor: make learn_predict a class, containing also prepare_from_data, and make subclasses for types of data. 
+#   thus should avoid learn_predict_gpstruct_wrapper, extra defaults for keyword arguments.

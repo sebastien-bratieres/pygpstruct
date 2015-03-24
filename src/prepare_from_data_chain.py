@@ -45,7 +45,7 @@ def learn_predict_gpstruct_wrapper(
     random_seed=0,
     stop_check=None,
     native_implementation=False,
-    hp_debug=False
+    log_f=False
     ):
     if data_folder==None:
         data_folder = './data/%s' % task
@@ -90,7 +90,7 @@ def learn_predict_gpstruct_wrapper(
                            kernel=kernel,
                            random_seed=random_seed,
                            stop_check=stop_check,
-                           hp_debug=hp_debug
+                           log_f=log_f
                            )
 
 def prepare_from_data_chain(data_indices_train, data_indices_test, data_folder, logger, n_labels, n_features_x, native_implementation):

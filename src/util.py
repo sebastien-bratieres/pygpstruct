@@ -137,7 +137,7 @@ def make_figure(data_col_list, file_pattern_list, bottom=None, top=None, max_dis
         fig = plt.figure(figsize=(6,4))
         ax = fig.add_subplot(111)
         
-        linestyles = ['-', '--', '-.', ':']
+        linestyles = ['-', '--', '-.', ':', '..', 'o', 'x']
         linestyle_index = 0
         for (file_pattern_legend, file_pattern) in file_pattern_list: # new curve for each file group
             data = read_data(file_pattern, data_col, max_display_length)
@@ -147,7 +147,7 @@ def make_figure(data_col_list, file_pattern_list, bottom=None, top=None, max_dis
         ax.set_xlabel('MCMC iterations')
         data_col_legend = {None: 'Matlab error rate', 
                            4: 'per-atom average negative log marginal',
-                           3: 'error rate', 
+                           3: 'test set error rate, marginalized over f's', 
                            2: 'scaled LL test set',
                            1: 'current error rate on training set',
                            0: 'current LL train set'}
