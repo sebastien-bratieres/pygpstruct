@@ -43,8 +43,7 @@ def eval_particle_simple(pp, lik_fn, theta_Lprior, Lpstar_min,
         pp.on_slice = False
         return 
     L = Lfn(pp.pos) # L = lower chol K_theta
-    L_inv_f = L.solve(pp.ff) # equivalent of L.solve
-    Lfprior = -0.5 * L_inv_f.T.dot(L_inv_f) - L.diag_log_sum(); # + const # this is log p(f|theta)
+    Lfprior = -0.5 * pp.ff.T.dot(L.solve_cholesky_lower(pp.ff)) - L.diag_log_sum(); # + const # this is log p(f|theta)
     # log(p(f|theta)) = log(N(pp.ff ; 0, U_theta)) = -1/2 f.T (L.T.dot(L))^1 f - log(sqrt(2 * pi * det(L.T.dot(L)))) 
 
     pp.lik_fn_ff = lik_fn(pp.ff)
