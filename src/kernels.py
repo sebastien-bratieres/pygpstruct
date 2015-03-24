@@ -48,10 +48,10 @@ def compute_lower_chol_k(kernel, lhp, X_train, n_labels):
 #    read_randoms(len(k_unary.flatten(order='F')), should=k_unary.flatten(order='F'), true_random_source=False) # DEBUG
     if ("unary" in lhp and "binary" in lhp):
         lower_chol_k_compact = gram_compact(np.linalg.cholesky(np.exp(lhp["unary"]) * k_unary), np.sqrt(np.exp(lhp["binary"])), n_labels)
-    elif ("alpha" in lhp and "lambda"in lhp):
-        lower_chol_k_compact = gram_compact(np.linalg.cholesky(np.exp(lhp["alpha"]) * k_unary), np.sqrt(np.exp(lhp["alpha"]) + ljp["gamma"]), n_labels)
+    elif ("alpha" in lhp and "lambda" in lhp):
+        lower_chol_k_compact = gram_compact(np.linalg.cholesky(np.exp(lhp["alpha"]) * k_unary), np.sqrt(np.exp(lhp["alpha"]) + lhp["lambda"]), n_labels)
     else:
-        raise("Unknown parameterization for kernel")
+        raise NameError("Unknown parameterization for kernel")
     return lower_chol_k_compact
 
 def compute_k_star_T_k_inv(kernel, lhp, X_train, X_test, n_labels, lower_chol_k_compact):
@@ -189,7 +189,9 @@ class gram_compact():
     
     @staticmethod
     def solve_cholesky_lower_basic(L, v):
-        return np.linalg.solve(L.T, np.linalg.solve(L,v))
+        return scipy.linalg.solve_triangular(L.T, scipy.linalg.solve_triangular(L,v, lower=True, check_finite=False), check_finite=False)
+        # when you know your matrix is triangular, don't use (scipy or numpy).linalg.solve, but rather scipy.linalg.solve_triangular, with the check_finite parameter.
+        # same answer given by: return np.linalg.solve(L.T, np.linalg.solve(L,v)) 
         
     def solve_cholesky_lower(self, v):
         """
@@ -283,7 +285,8 @@ if __name__ == "__main__":
     
     np.testing.assert_almost_equal(
         L.expand(),
-        A.cholesky().expand())
+        A.cholesky().expand(),
+        decimal=5)
     
     # check L * L.T == A
     np.testing.assert_almost_equal(
@@ -294,7 +297,7 @@ if __name__ == "__main__":
     np.testing.assert_almost_equal(
         L.solve_cholesky_lower(v),
         L.T_solve(L.solve(v)),
-        decimal=5)
+        decimal=4)
     np.testing.assert_almost_equal(
         A.solve(v),
         np.linalg.solve(A.expand(), v),
@@ -302,12 +305,13 @@ if __name__ == "__main__":
 
     np.testing.assert_almost_equal(
         np.linalg.solve(L.expand().T, np.linalg.solve(L.expand(), v)),
-        np.linalg.solve(A.expand(), v))
+        np.linalg.solve(A.expand(), v),
+        decimal=4)
     
     np.testing.assert_almost_equal(
         L.solve_cholesky_lower(v),
         A.solve(v),
-        decimal=5)
+        decimal=4)
     np.testing.assert_almost_equal(
         np.linalg.cholesky(k_compact.expand()).T,
         gram_compact(k_unary, k_binary_scalar, n_labels).cholesky_T().expand(),
