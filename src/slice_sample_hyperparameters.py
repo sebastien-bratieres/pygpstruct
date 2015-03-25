@@ -63,7 +63,7 @@ def update_theta_aux_chol(theta, ff, lik_fn,
     """
 
     L = Lfn(theta)
-    nu = L.T_solve(ff)
+    nu = L.solve(ff)
 
     # Slice sample theta|nu
     class particle:
@@ -89,7 +89,7 @@ def eval_particle_aux_chol(pp, nu, lik_fn, theta_Lprior, Lpstar_min,
         pp.Lpstar = np.NINF
         return
     L = Lfn(pp.pos)
-    ff = L.T_dot(nu) # ff = np.dot(nu.T,L).T
+    ff = L.dot(nu) # ff = np.dot(nu.T,L).T
 
     pp.lik_fn_ff = lik_fn(ff)
     pp.Lpstar = Ltprior + pp.lik_fn_ff
@@ -138,6 +138,8 @@ def slice_sweep(particle, slice_fn, sigma=1, step_out=True):# should not need to
     assert(particle.on_slice)
     # A random order (in hyperparameters) is more robust generally and important inside algorithms like nested sampling and AIS
     for (dd, x_cur) in enumerate(particle.pos):
+    #for dd in np.random.permutation(particle.pos.shape[0]):
+    #    x_cur = particle.pos[dd]
         #print('working in param %s' % d)
         # Lpstar_min is sampled so that pstar_min ~ U[0,pstar]
         Lpstar_min = particle.Lpstar + np.log(util.read_randoms(1, 'u')[0]) # take [0] to make scalar
