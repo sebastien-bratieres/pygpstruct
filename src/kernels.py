@@ -175,6 +175,7 @@ class gram_compact():
     
     def solve(self, v):
         """
+        return self^-1 * v
         equivalent forms of x = K.solve(v):
         x = numpy.linalg.solve(K, v)
         K * x = v
@@ -187,19 +188,34 @@ class gram_compact():
         result[self.n*self.n_labels:] = v[self.n*self.n_labels:] / self.gram_binary_scalar # binary section, should be length n_labels ** 2
         return result
     
+    def solve_triangular(self, v):
+        """
+        return self^-1 * v, when we know that self is lower triangular
+        equivalent forms of x = K.solve(v):
+        x = numpy.linalg.solve(K, v)
+        K * x = v
+        Matlab x = K\v
+        """
+        assert(v.shape[0] == (self.n_labels * self.n + self.n_labels ** 2))
+        result = np.zeros((self.n_labels * self.n + self.n_labels ** 2), dtype=learn_predict.dtype_for_arrays)
+        for label in range(self.n_labels):
+            result[label * self.n : (label + 1) * self.n] = scipy.linalg.solve_triangular(self.gram_unary, v[label*self.n : (label+1)*self.n], lower=True, check_finite=False)
+        result[self.n*self.n_labels:] = v[self.n*self.n_labels:] / self.gram_binary_scalar # binary section, should be length n_labels ** 2
+        return result
+
     @staticmethod
     def solve_cholesky_lower_basic(L, v):
-        return scipy.linalg.solve_triangular(L.T, scipy.linalg.solve_triangular(L,v, lower=True, check_finite=False), check_finite=False)
+        return scipy.linalg.solve_triangular(L.T, scipy.linalg.solve_triangular(L,v, lower=True, check_finite=False), lower=False, check_finite=False)
         # when you know your matrix is triangular, don't use (scipy or numpy).linalg.solve, but rather scipy.linalg.solve_triangular, with the check_finite parameter.
         # same answer given by: return np.linalg.solve(L.T, np.linalg.solve(L,v)) 
         
     def solve_cholesky_lower(self, v):
         """
-        solve linear equations from the Cholesky factorization
+        solve linear equations from the Cholesky factorization: given equation A X = L L^T X = B, return L^-T L^-1 B
         "self" is assumed to be lower triangular
-        Solve A*X = B for X, where A is square, symmetric, positive definite. The input to the function is L the Cholesky decomposition of A and the matrix B.
+        Solve A*X = B for X, where A is square, symmetric, positive definite. The input to the function is L the lower Cholesky decomposition of A and the matrix B.
         L = A.cholesky()
-        X = L.solve_cholesky_lower(v) == A.solve(v) == L.solve(L.T_solve(v))
+        X = L.solve_cholesky_lower(v) == A.solve(v) == L.T_solve(L.solve(v))
         """
         assert(v.shape[0] == (self.n_labels * self.n + self.n_labels ** 2))
         np.testing.assert_array_almost_equal(self.gram_unary, np.tril(self.gram_unary)) # assert gram_unary is lower triangular
