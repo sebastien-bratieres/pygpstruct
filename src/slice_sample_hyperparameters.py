@@ -63,7 +63,7 @@ def update_theta_aux_chol(theta, ff, lik_fn,
     """
 
     L = Lfn(theta)
-    nu = L.solve(ff)
+    nu = L.solve_triangular(ff)
 
     # Slice sample theta|nu
     class particle:
@@ -89,7 +89,7 @@ def eval_particle_aux_chol(pp, nu, lik_fn, theta_Lprior, Lpstar_min,
         pp.Lpstar = np.NINF
         return
     L = Lfn(pp.pos)
-    ff = L.dot(nu) # ff = np.dot(nu.T,L).T
+    ff = L.dot(nu)
 
     pp.lik_fn_ff = lik_fn(ff)
     pp.Lpstar = Ltprior + pp.lik_fn_ff
@@ -268,12 +268,11 @@ def update_theta_aux_surr(theta, ff, lik_fn, Kfn, theta_Lprior, slice_width=10, 
         # pp.adapt_aux = 1;
         # pp.aux_fn = aux;
     # end
-    pp.size_f = ff.shape[0]
-    pp.gg = np.zeros((pp.size_f))
+    pp.gg = np.zeros_like(ff)
     theta_changed(pp)
 
     # Instantiate g|f
-    pp.gg = ff + util.read_randoms(pp.size_f, 'u') * pp.aux_std
+    pp.gg = ff + util.read_randoms(len(ff), 'u') * pp.aux_std
     pp.Sinv_g = pp.gg / pp.aux_var
 
     # Instantiate nu|f,gg
@@ -363,7 +362,7 @@ def eval_particle_aux_surr(pp, Lpstar_min, lik_fn, theta_Lprior, theta_unchanged
     Lfprior = -0.5 * pp.ff.T.dot(pp.U.T().solve_cholesky_lower(pp.ff)) - pp.U.diag_log_sum() #-0.5*(pp.ff'*solve_chol(pp.U, pp.ff)) - sum(log(diag(pp.U)));
     LJacobian = - pp.U_invR.diag_log_sum() # -sum(log(diag(pp.U_invR)));
 #    %LJacobian = sum(log(diag(pp.U_R)));
-    Lg_f = -0.5 * np.sum((pp.gg - pp.ff) ** 2) / pp.aux_var - np.sum(np.log(pp.aux_var * np.ones(pp.ff.shape[0]))) #-0.5*sum((pp.gg - pp.ff).^2)./pp.aux_var - sum(log(pp.aux_var.*ones(size(pp.ff))));
+    Lg_f = -0.5 * np.sum((pp.gg - pp.ff) ** 2) / pp.aux_var - 0.5 * np.sum(np.log(pp.aux_var * np.ones(pp.ff.shape[0]))) #-0.5*sum((pp.gg - pp.ff).^2)./pp.aux_var - sum(log(pp.aux_var.*ones(size(pp.ff))));
     pp.lik_fn_ff = lik_fn(pp.ff)
     pp.Lpstar = Ltprior + Lg_f + Lfprior + pp.lik_fn_ff + LJacobian
     # log p(theta) + log p(g|f) + log p(f|theta) + log p(x|f) + log p()
@@ -371,7 +370,52 @@ def eval_particle_aux_surr(pp, Lpstar_min, lik_fn, theta_Lprior, theta_unchanged
     if False:
         print('particle on slice? %g, pp.Lpstar = %g, Lpstar_min = %g. Ltprior = %g, Lg_f=%g, Lfprior=%g, lik_fn_ff=%g, LJacobian=%g. pp.U.diag_log_sum()=%g' % (pp.on_slice, pp.Lpstar, Lpstar_min, Ltprior, Lg_f, Lfprior, pp.lik_fn_ff, LJacobian, pp.U.diag_log_sum()))
         #return np.array([pp.Lpstar, Ltprior, Lg_f, Lfprior, pp.lik_fn_ff, LJacobian])
-        
+      
+def update_theta_aux_surr_new(theta, ff, lik_fn, Kfn, theta_Lprior, slice_width=10, aux=0.1):
+    class pp:
+        pass
+    pp.pos = theta
+    pp.Kfn = Kfn
+    pp.aux_var = aux * aux
+    pp.gg = np.zeros_like(ff) 
+    
+    # Instantiate g|f
+    S = gram_compact() # doesnt depend on theta
+    g = ff + S.cholesky().dot(pp.util.read_randoms(len(ff), 'u'))
+    chol_Z = (K + S).cholesky()
+    chol_R = R_theta(S, chol_Z).cholesky()
+    pp.eta = chol_R.solve_triangular(ff) + chol_R.T().dot(S.inv().dot(g))# requires solve_triangular, S.inv
+    pp.gg = g
+    pp.S = S
+    
+    slice_fn = lambda pp, Lpstar_min : eval_particle_aux_surr(pp, Lpstar_min, lik_fn, theta_Lprior)
+    eval_particle_aux_surr(pp, np.NINF, lik_fn, theta_Lprior, theta_unchanged = True) # theta hasn't moved yet, don't recompute covariances
+    assert(pp.on_slice)
+    if False:
+        print("after eval_particle_aux_surr")
+        print('particle on slice? %g, pp.Lpstar = %g' % (pp.on_slice, pp.Lpstar))
+
+    slice_sweep(pp, slice_fn, sigma = abs(slice_width), step_out = (slice_width > 0))
+    return (pp.pos, pp.ff, pp.lik_fn_ff)
+
+def eval_particle_aux_surr(pp, Lpstar_min, lik_fn, theta_Lprior):
+    Ltprior = theta_Lprior(pp.pos)
+    #    print(Ltprior)
+    if Ltprior == np.NINF:
+        pp.on_slice = False
+        pp.Lpstar = np.NINF
+        return
+    K = pp.Kfn(pp.pos)
+    chol_Z = (K + pp.S).cholesky()
+    Zinv_g = chol_Z.solve_cholesky_lower(pp.gg)
+    m = K.dot(Zinv_g)
+    pp.ff = (R_theta(pp.S, chol_Z)).dot(pp.eta) + m # requires from gram_compact: minus matrix, dot matrix, solve_chol matrix
+    log_g_theta = - chol_Z.diag_log_sum() - 0.5 * pp.gg.T.dot(Zinv_g)
+    pp.Lpstar = lik_fn(pp.ff) + log_g_theta + Ltprior
+    pp.on_slice = (pp.Lpstar >= Lpstar_min)
+    
+def R_theta(S, chol_Z):
+    return S - S.dot(chol_Z.solve_cholesky_lower(S))
 """
 OPTIMIZING SURROGATE DATA
 • can carry out further algebraic simplifications entirely in Python (unit tests use only Python code)
