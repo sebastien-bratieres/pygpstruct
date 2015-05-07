@@ -115,7 +115,6 @@ def learn_predict_gpstruct_wrapper(
     noise_feature_weight=1,
     console_log=True,
     random_seed=0,
-    hp_debug=True,
     ):        
 
     if start_from_clean_slate:
@@ -147,6 +146,5 @@ def learn_predict_gpstruct_wrapper(
         lhp_init=lhp_init,
         kernel=kernel,
         random_seed=random_seed,
-        hp_debug=hp_debug
         )
 
