@@ -21,7 +21,7 @@ def lse_numba_axis_1(a, result):
     return result
 
 
-@numba.njit('double[:](double[:], double[:], double[:])')
+@numba.njit #('double[:](double[:], double[:], double[:])') # commented out 6/5/2015 cos was causing TypingError Undeclared dispatcher (numba 0.18.2)
 def sum_vec(a,b, result):
     for r in range(a.shape[0]):
         result[r] = a[r]+b[r]
