@@ -370,7 +370,9 @@ def eval_particle_aux_surr(pp, Lpstar_min, lik_fn, theta_Lprior, theta_unchanged
     if False:
         print('particle on slice? %g, pp.Lpstar = %g, Lpstar_min = %g. Ltprior = %g, Lg_f=%g, Lfprior=%g, lik_fn_ff=%g, LJacobian=%g. pp.U.diag_log_sum()=%g' % (pp.on_slice, pp.Lpstar, Lpstar_min, Ltprior, Lg_f, Lfprior, pp.lik_fn_ff, LJacobian, pp.U.diag_log_sum()))
         #return np.array([pp.Lpstar, Ltprior, Lg_f, Lfprior, pp.lik_fn_ff, LJacobian])
-      
+
+        
+        
 def update_theta_aux_surr_new(theta, ff, lik_fn, Kfn, theta_Lprior, slice_width=10, aux=0.1):
     class pp:
         pass
@@ -379,17 +381,24 @@ def update_theta_aux_surr_new(theta, ff, lik_fn, Kfn, theta_Lprior, slice_width=
     pp.aux_var = aux * aux
     pp.gg = np.zeros_like(ff) 
     
-    # Instantiate g|f
-    S = gram_compact() # doesnt depend on theta
-    g = ff + S.cholesky().dot(pp.util.read_randoms(len(ff), 'u'))
-    chol_Z = (K + S).cholesky()
-    chol_R = R_theta(S, chol_Z).cholesky()
-    pp.eta = chol_R.solve_triangular(ff) + chol_R.T().dot(S.inv().dot(g))# requires solve_triangular, S.inv
+    # construct S
+    n_labels = 5 # assumption, to make S the correct size
+    n_data_points = (len(ff) - n_labels ** 2 ) // n_labels
+    import kernels
+    S = kernels.gram_compact(aux * np.eye(n_data_points, n_data_points), aux, n_labels) # doesnt depend on theta
+    
+    # sample g|f from N(g|f, S)
+    g = ff + S.cholesky().dot(util.read_randoms(len(ff), 'u'))
+    pp.K = pp.Kfn(theta)
+    pp.chol_Z = (pp.K + S).cholesky()
+    chol_R = R_theta(S, pp.chol_Z).cholesky()
+    S_inv = kernels.gram_compact(1/aux * np.eye(n_data_points, n_data_points), 1/aux, n_labels) # easy in case S doesnt depend on theta
+    pp.eta = chol_R.solve_triangular(ff) + chol_R.T().dot(S_inv.dot(g))# requires solve_triangular, S.inv
     pp.gg = g
     pp.S = S
     
-    slice_fn = lambda pp, Lpstar_min : eval_particle_aux_surr(pp, Lpstar_min, lik_fn, theta_Lprior)
-    eval_particle_aux_surr(pp, np.NINF, lik_fn, theta_Lprior, theta_unchanged = True) # theta hasn't moved yet, don't recompute covariances
+    slice_fn = lambda pp, Lpstar_min : eval_particle_aux_surr_new(pp, Lpstar_min, lik_fn, theta_Lprior)
+    eval_particle_aux_surr_new(pp, np.NINF, lik_fn, theta_Lprior, theta_unchanged = True) # theta hasn't moved yet, don't recompute covariances
     assert(pp.on_slice)
     if False:
         print("after eval_particle_aux_surr")
@@ -398,20 +407,22 @@ def update_theta_aux_surr_new(theta, ff, lik_fn, Kfn, theta_Lprior, slice_width=
     slice_sweep(pp, slice_fn, sigma = abs(slice_width), step_out = (slice_width > 0))
     return (pp.pos, pp.ff, pp.lik_fn_ff)
 
-def eval_particle_aux_surr(pp, Lpstar_min, lik_fn, theta_Lprior):
+def eval_particle_aux_surr_new(pp, Lpstar_min, lik_fn, theta_Lprior, theta_unchanged = False):
     Ltprior = theta_Lprior(pp.pos)
     #    print(Ltprior)
     if Ltprior == np.NINF:
         pp.on_slice = False
         pp.Lpstar = np.NINF
         return
-    K = pp.Kfn(pp.pos)
-    chol_Z = (K + pp.S).cholesky()
-    Zinv_g = chol_Z.solve_cholesky_lower(pp.gg)
-    m = K.dot(Zinv_g)
-    pp.ff = (R_theta(pp.S, chol_Z)).dot(pp.eta) + m # requires from gram_compact: minus matrix, dot matrix, solve_chol matrix
-    log_g_theta = - chol_Z.diag_log_sum() - 0.5 * pp.gg.T.dot(Zinv_g)
-    pp.Lpstar = lik_fn(pp.ff) + log_g_theta + Ltprior
+    if not theta_unchanged:
+        pp.K = pp.Kfn(pp.pos)
+        pp.chol_Z = (pp.K + pp.S).cholesky()
+    Zinv_g = pp.chol_Z.solve_cholesky_lower(pp.gg)
+    m = pp.K.dot(Zinv_g)
+    pp.ff = (R_theta(pp.S, pp.chol_Z)).dot(pp.eta) + m # requires from gram_compact: minus matrix, dot matrix, solve_chol matrix
+    log_g_theta = - pp.chol_Z.diag_log_sum() - 0.5 * pp.gg.T.dot(Zinv_g)
+    pp.lik_fn_ff = lik_fn(pp.ff)
+    pp.Lpstar = pp.lik_fn_ff + log_g_theta + Ltprior
     pp.on_slice = (pp.Lpstar >= Lpstar_min)
     
 def R_theta(S, chol_Z):

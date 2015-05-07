@@ -217,13 +217,20 @@ class gram_compact():
         L = A.cholesky()
         X = L.solve_cholesky_lower(v) == A.solve(v) == L.T_solve(L.solve(v))
         """
-        assert(v.shape[0] == (self.n_labels * self.n + self.n_labels ** 2))
         np.testing.assert_array_almost_equal(self.gram_unary, np.tril(self.gram_unary)) # assert gram_unary is lower triangular
-        result = np.zeros((self.n_labels * self.n + self.n_labels ** 2), dtype=learn_predict.dtype_for_arrays)
-        for label in range(self.n_labels):
-            result[label * self.n : (label + 1) * self.n] = gram_compact.solve_cholesky_lower_basic(self.gram_unary, v[label*self.n : (label+1)*self.n])
-        result[self.n*self.n_labels:] = v[self.n*self.n_labels:] / (self.gram_binary_scalar ** 2) # binary section, should be length n_labels ** 2
+        if type(v) is gram_compact:
+            return gram_compact(gram_compact.solve_cholesky_lower_basic(self.gram_unary, v.gram_unary),
+                                v.gram_binary_scalar / self.gram_binary_scalar,
+                                self.n_labels) # result is no longer lower triangular like self
+        else:
+            assert(v.shape[0] == (self.n_labels * self.n + self.n_labels ** 2))
+            result = np.zeros((self.n_labels * self.n + self.n_labels ** 2), dtype=learn_predict.dtype_for_arrays)
+            for label in range(self.n_labels):
+                result[label * self.n : (label + 1) * self.n] = gram_compact.solve_cholesky_lower_basic(self.gram_unary, v[label*self.n : (label+1)*self.n])
+            result[self.n*self.n_labels:] = v[self.n*self.n_labels:] / (self.gram_binary_scalar ** 2) # binary section, should be length n_labels ** 2
         return result
+# REFACTOR gram_compact: make subclass lower_tri holding lower triang unary (typically as a result of a .cholesky() operation)
+# then for this class, can use solve_triang instead of solve_ and define solve_chol_lower
         
     def dot_wrapper(self, v, A):
         assert(v.shape[0] == (self.n_labels * self.n + self.n_labels ** 2))
@@ -236,7 +243,12 @@ class gram_compact():
         return result
         
     def dot(self, v):
-        return self.dot_wrapper(v, self.gram_unary)
+        if type(v) is gram_compact:
+            return gram_compact(self.gram_unary.dot(v.gram_unary),
+                                self.gram_binary_scalar * v.gram_binary_scalar,
+                                self.n_labels)
+        else:
+            return self.dot_wrapper(v, self.gram_unary)
         
     def T_dot(self, v):
         return self.dot_wrapper(v, self.gram_unary.T)
@@ -255,8 +267,22 @@ class gram_compact():
         K_inv = np.linalg.inv(self.gram_unary)
         diag_matrix = np.eye(self.n) * scalar
         return gram_compact(np.linalg.cholesky(K_inv + diag_matrix).T, np.sqrt(1 / self.gram_binary_scalar + scalar), self.n_labels)
+    
+    def __add__(self,right):
+        if type(right) is not gram_compact:
+            raise TypeError('unsupported operand type(s) for +'+
+                            ': \''+type_as_str(self)+'\' and \''+type_as_str(right)+'\'')        
+        assert(self.gram_unary.shape[0] == right.gram_unary.shape[0] and self.n_labels == right.n_labels), \
+               'gram_compact.__add__: left operand has different dimensions than right operand'
+        return gram_compact(self.gram_unary + right.gram_unary, self.gram_binary_scalar + right.gram_binary_scalar, self.n_labels)
 
-
+    def __sub__(self, right):
+        if type(right) is not gram_compact:
+            raise TypeError('unsupported operand type(s) for -'+
+                            ': \''+type_as_str(self)+'\' and \''+type_as_str(right)+'\'')        
+        assert(self.gram_unary.shape[0] == right.gram_unary.shape[0] and self.n_labels == right.n_labels), \
+               'gram_compact.__sub__: left operand has different dimensions than right operand'
+        return gram_compact(self.gram_unary - right.gram_unary, self.gram_binary_scalar - right.gram_binary_scalar, self.n_labels)
 
 if __name__ == "__main__":
     import numpy
