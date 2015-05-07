@@ -1,3 +1,16 @@
+def log_code_hash():
+    '''produce log string documenting status/ commit hash of current source code'''
+    import subprocess
+    import os
+    wd = os.path.dirname(os.path.realpath(__file__))
+    label = subprocess.check_output(["git", "status", "--porcelain"], cwd=wd).decode('utf-8')
+    if label != '':
+        label = 'Local changes:\n' + label
+    else:
+        label = 'Clean working copy. '
+    label += 'Hash of current commit: ' + subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=wd).decode('utf-8')
+    return label
+
 # will work with dict
 # keeps only the last result in memory at any given time (useful for very big results)
 # will hash input using str() function (cos it should work on small dicts)

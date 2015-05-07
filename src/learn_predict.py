@@ -93,6 +93,7 @@ def learn_predict_gpstruct( prepare_from_data,
     
     # logging all input parameters cf http://stackoverflow.com/questions/2521901/get-a-list-tuple-dict-of-the-arguments-passed-to-a-function -- bottom line use locals() which is a dict of all local vars
     logger.info('learn_predict_gpstruct started with arguments: ' + str(function_args))
+    logger.info('source code status: ' + util.log_code_hash())
 
     
 #    if errorThinning < prediction_thinning:
@@ -197,6 +198,14 @@ def learn_predict_gpstruct( prepare_from_data,
                     )
             elif (hp_sampling_mode == 'surrogate data'):
                 (lhp_target, current_f, current_ll_train) = slice_sample_hyperparameters.update_theta_aux_surr(
+                    theta = get_lhp_target(lhp), # starting values 
+                    ff = current_f, 
+                    lik_fn = ll_train, 
+                    Kfn = Kfn,
+                    theta_Lprior = lambda _lhp_target : 0 if (np.all(_lhp_target>np.log(1e-3)) and np.all(_lhp_target<np.log(1e2))) else np.NINF,
+                    )
+            elif (hp_sampling_mode == 'surrogate data new'):
+                (lhp_target, current_f, current_ll_train) = slice_sample_hyperparameters.update_theta_aux_surr_new(
                     theta = get_lhp_target(lhp), # starting values 
                     ff = current_f, 
                     lik_fn = ll_train, 
