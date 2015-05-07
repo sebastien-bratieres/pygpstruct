@@ -64,14 +64,23 @@ def read_randoms(n=-1, type=None, should=None):
 
 
 import time
-def stop_check(delay = None):
-    if (delay != None):
-        stop_check.stop_time = delay + time.time()
-    else:
-        if stop_check.stop_time < time.time():
+import os
+class stop_check:
+    """.evaluate will return True if delay is elapsed OR path exists"""
+    def __init__(self, delay = None, path = None):
+        self.stop_time = None
+        self.path = None
+        if (delay != None):
+            self.stop_time = delay + time.time()
+        if path != None:
+            self.path = path
+    
+    def evaluate(self):
+        if self.stop_time != None and self.stop_time < time.time():
             return True
-        else:
-            return False
+        if self.path != None and os.path.exists(self.path):
+            return True
+        return False
 
 import numpy as np
 import prepare_from_data_chain
