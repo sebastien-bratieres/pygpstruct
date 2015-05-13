@@ -284,6 +284,10 @@ class gram_compact():
                'gram_compact.__sub__: left operand has different dimensions than right operand'
         return gram_compact(self.gram_unary - right.gram_unary, self.gram_binary_scalar - right.gram_binary_scalar, self.n_labels)
 
+    @staticmethod
+    def identity(n_train, n_labels, __aux_var):
+        return gram_compact(__aux_var * np.eye(n_train, n_train), __aux_var, n_labels) 
+        
 if __name__ == "__main__":
     import numpy
     import scipy.linalg

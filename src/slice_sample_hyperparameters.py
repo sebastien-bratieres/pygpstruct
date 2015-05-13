@@ -372,27 +372,30 @@ def eval_particle_aux_surr(pp, Lpstar_min, lik_fn, theta_Lprior, theta_unchanged
         #return np.array([pp.Lpstar, Ltprior, Lg_f, Lfprior, pp.lik_fn_ff, LJacobian])
 
         
-        
-def update_theta_aux_surr_new(theta, ff, lik_fn, Kfn, theta_Lprior, slice_width=10, aux=0.1):
+import kernels
+import gc
+def update_theta_aux_surr_new(theta, ff, lik_fn, Kfn, theta_Lprior, n_train, n_labels, logger, slice_width=10, aux=0.1):
     class pp:
         pass
     pp.pos = theta
     aux_var = aux * aux
-    
-    # construct S
-    n_labels = 5 # assumption, to make S the correct size
-    n_data_points = (len(ff) - n_labels ** 2 ) // n_labels
-    import kernels
-    S = kernels.gram_compact(aux * np.eye(n_data_points, n_data_points), aux, n_labels) # doesnt depend on theta
-    S_inv = kernels.gram_compact(1/aux * np.eye(n_data_points, n_data_points), 1/aux, n_labels) # easy in case S doesnt depend on theta
+    identity = lambda __aux_var : kernels.gram_compact.identity(n_train, n_labels, __aux_var)
     
     # sample g|f from N(g|f, S)
-    g = ff + S.cholesky().dot(util.read_randoms(len(ff), 'u'))
+    g = ff + identity(np.sqrt(aux_var)).dot(util.read_randoms(len(ff), 'n'))
+    # note identity(np.sqrt(aux_var)) = chol(S)
     
     # compute ancillaries of theta
-    ancillaries_theta_fn = lambda theta : ancillaries_theta_complete(theta, Kfn, S, g)
+    logger.debug('compute ancillaries for theta')
+    ancillaries_theta_fn = lambda theta : ancillaries_theta_complete(theta, Kfn, identity(aux_var), g)
     ancillaries_theta = ancillaries_theta_fn(theta)
-    eta = ancillaries_theta.chol_R.solve_triangular(ff) + ancillaries_theta.chol_R.T().dot(S_inv.dot(g))# requires solve_triangular, S.inv
+
+    # construct eta
+    logger.debug('construct eta')
+    eta = ancillaries_theta.chol_R.solve_triangular(ff) \
+        + ancillaries_theta.chol_R.T().dot(identity(1/aux_var).dot(g))# requires solve_triangular, S.inv
+    # OPTIMIZE can certainly optimize Sinv.dot(g) when S = alpha* I
+    # note identity(1/aux_var) = Sinv
     
     # set particle
     pp.g = g
@@ -400,6 +403,7 @@ def update_theta_aux_surr_new(theta, ff, lik_fn, Kfn, theta_Lprior, slice_width=
     pp.ancillaries_theta = ancillaries_theta
     pp.f = ff
     # initial evaluation of Lpstar and on-sliceness
+    logger.debug('initial evaluation of Lpstar and on-sliceness')
     eval_particle_aux_surr_new(pp, np.NINF, lik_fn, theta_Lprior, ancillaries_theta_fn, theta_unchanged = True) # theta hasn't moved yet, don't recompute covariances
     assert(pp.on_slice)
     if False:
@@ -407,13 +411,20 @@ def update_theta_aux_surr_new(theta, ff, lik_fn, Kfn, theta_Lprior, slice_width=
         print('particle on slice? %g, pp.Lpstar = %g' % (pp.on_slice, pp.Lpstar))
 
     # update theta by slice sampling (1 sweep)
-    slice_fn = lambda pp, Lpstar_min : eval_particle_aux_surr_new(pp, Lpstar_min, lik_fn, theta_Lprior, Kfn, S)
+    logger.debug('slice sampling sweep')
+    slice_fn = lambda pp, Lpstar_min : eval_particle_aux_surr_new(pp, Lpstar_min, lik_fn, theta_Lprior, ancillaries_theta_fn)
     slice_sweep(pp, slice_fn, sigma = abs(slice_width), step_out = (slice_width > 0))
 
     # update f from new theta, ancillaries(new theta), g, eta
+    logger.debug('update f')
     m = pp.ancillaries_theta.K.dot(pp.ancillaries_theta.Zinv_g)
-    pp.f = R_theta(S, pp.ancillaries_theta.chol_Z).cholesky().dot(eta) + m # requires from gram_compact: minus matrix, dot matrix, solve_chol matrix
-    return (pp.pos, pp.f, pp.lik_fn_ff)
+    pp.f = pp.ancillaries_theta.chol_R.dot(eta) + m # requires from gram_compact: minus matrix, dot matrix, solve_chol matrix
+    pos = pp.pos
+    f = pp.f
+    lik_fn_ff = pp.lik_fn_ff
+    del pp
+    gc.collect()
+    return (pos, f, lik_fn_ff)
 
 def eval_particle_aux_surr_new(pp, Lpstar_min, lik_fn, theta_Lprior, ancillaries_theta_fn, theta_unchanged = False):
     Ltprior = theta_Lprior(pp.pos) # compute p(theta)
@@ -426,7 +437,7 @@ def eval_particle_aux_surr_new(pp, Lpstar_min, lik_fn, theta_Lprior, ancillaries
     pp.lik_fn_ff = lik_fn(pp.f) # compute p(f|D)
 
     if not theta_unchanged: # recompute ancillaries_theta
-        pp.ancillaries_theta = ancillaries_theta_fn(theta)
+        pp.ancillaries_theta = ancillaries_theta_fn(pp.pos)
     
     # compute p(g|theta)
     log_g_theta = - pp.ancillaries_theta.chol_Z.diag_log_sum() - 0.5 * pp.g.T.dot(pp.ancillaries_theta.Zinv_g) 
@@ -439,12 +450,12 @@ def ancillaries_theta_complete(theta, Kfn, S, g):
         pass
     ancillaries_theta.K = Kfn(theta)
     ancillaries_theta.chol_Z = (ancillaries_theta.K + S).cholesky()
+    ancillaries_theta.chol_R = (S - S.dot(ancillaries_theta.chol_Z.solve_cholesky_lower(S))).cholesky()
+    del S # order of previous statements important; so that I can de-reference S as soon as possible (since this will impact the max mem usage)
+    gc.collect()
     ancillaries_theta.Zinv_g = ancillaries_theta.chol_Z.solve_cholesky_lower(g)
-    ancillaries_theta.chol_R = R_theta(S, ancillaries_theta.chol_Z).cholesky()
     return ancillaries_theta
 
-def R_theta(S, chol_Z):
-    return S - S.dot(chol_Z.solve_cholesky_lower(S))
 """
 OPTIMIZING SURROGATE DATA
 • can carry out further algebraic simplifications entirely in Python (unit tests use only Python code)
