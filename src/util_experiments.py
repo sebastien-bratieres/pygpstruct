@@ -102,7 +102,7 @@ def run_experiment_fear(completed_arguments_dict, prepare_from_data_type):
 import time
     
 # TODO should always return a JSON file+ stdout recap of call jobs launched, to coordinate hashes with expt parameters
-def run_experiments(lbview=None, prepare_from_data_type = 'synthetic', variable_arguments_list = [], common_arguments = {}, result_prefix = '/tmp/pygpstruct_',require_output=True):
+def run_experiments(lbview=None, prepare_from_data_type = 'synthetic', variable_arguments_list = [], common_arguments = {}, result_prefix = '/tmp/pygpstruct_',require_output=False):
 
     default_common_arguments = {'n_samples' : 2001}
     default_common_arguments.update(common_arguments)
@@ -123,9 +123,10 @@ def run_experiments(lbview=None, prepare_from_data_type = 'synthetic', variable_
     sys.stdout.flush()
     if lbview != None:
         # need to pass all args in lambda cos otherwise "ValueError: sorry, can't pickle functions with closures"
-        lbview.map_sync(lambda completed_arguments_dict, prepare_from_data_type=prepare_from_data_type: 
+        asr = lbview.map_async(lambda completed_arguments_dict, prepare_from_data_type=prepare_from_data_type: 
             run_experiment_parallel(completed_arguments_dict, prepare_from_data_type),
                                        completed_arguments_list)
+        return asr
     else:
         for completed_arguments_dict in completed_arguments_list:
             run_experiment_sequential(completed_arguments_dict, prepare_from_data_type) 
