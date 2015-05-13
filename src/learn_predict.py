@@ -13,6 +13,7 @@ import slice_sample_hyperparameters
 import util
 import kernels
 import copy
+import gc
 
 dtype_for_arrays=np.float32
 
@@ -120,8 +121,8 @@ def learn_predict_gpstruct( prepare_from_data,
     # compute_error_nlm(marginals) returns error and avg post marginals
     # ll_test(current f) returns LL of test data
     
-    TT_train = X_train.shape[0]
-    TT_test = X_test.shape[0]
+    n_train = X_train.shape[0]
+    n_test = X_test.shape[0]
     #read_randoms(len(X_train.todense().flatten(order='F').T), should=np.squeeze(np.array(X_train.todense()).flatten(order='F').T), true_random_source=False) # DEBUG
     #read_randoms(len(X_test.todense().flatten(order='F').T), should=np.squeeze(np.array(X_test.todense()).flatten(order='F').T), true_random_source=False) # DEBUG
     # prepare kernel matrix
@@ -145,7 +146,7 @@ def learn_predict_gpstruct( prepare_from_data,
         lhp = saved_state_dict['lhp']
         logger.info('hotstart from iteration %g, including stored random state. hotstart data = %s' % (mcmc_step, str(saved_state_dict)))
     else: # initialize state
-        current_f = np.zeros(n_labels * TT_train + n_labels**2, dtype=dtype_for_arrays)
+        current_f = np.zeros(n_labels * n_train + n_labels**2, dtype=dtype_for_arrays)
         mcmc_step=0
         util.read_randoms.prng = np.random.RandomState(random_seed)
         if (lhp_update != None):
@@ -211,9 +212,13 @@ def learn_predict_gpstruct( prepare_from_data,
                     lik_fn = ll_train, 
                     Kfn = Kfn,
                     theta_Lprior = lambda _lhp_target : 0 if (np.all(_lhp_target>np.log(1e-3)) and np.all(_lhp_target<np.log(1e2))) else np.NINF,
+                    n_train = n_train, 
+                    n_labels = n_labels,
+                    logger = logger
                     )
             else:
                 raise Exception('hyperparameter sampling mode %s not supported; should be one of the supported methods or None.' % hp_sampling_mode)
+            gc.collect()
             # recompute kernels and factors involving kernels
             lhp = set_lhp_target(lhp, lhp_target) # should be already done because particle.pos (mutable) is updated in-place
             logger.debug('lhp update: %s' % str(lhp))
@@ -239,7 +244,7 @@ def learn_predict_gpstruct( prepare_from_data,
             # % sample f*
             # % want f* sampling to not affect f sampling, so preserve randn state before this
             # f_rng_state = randn('state');
-            # marginals = zeros(TT_test, n_labels, n_f_star);
+            # marginals = zeros(n_test, n_labels, n_f_star);
             # for i=1:n_f_star
             #     marginals(:,:,i) = predictiveMarginalsN(f_star_mean + ...
             #         [sampleFFromKernel(n_labels, lowerCholfStarCov, true ) ; ...
