@@ -95,6 +95,7 @@ def learn_predict_gpstruct( prepare_from_data,
     # logging all input parameters cf http://stackoverflow.com/questions/2521901/get-a-list-tuple-dict-of-the-arguments-passed-to-a-function -- bottom line use locals() which is a dict of all local vars
     logger.info('learn_predict_gpstruct started with arguments: ' + str(function_args))
     logger.info('source code status: ' + util.log_code_hash())
+    logger.info('process id: ' + str(os.getpid()))
 
     
 #    if errorThinning < prediction_thinning:

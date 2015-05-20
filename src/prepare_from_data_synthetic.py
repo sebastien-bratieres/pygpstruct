@@ -86,10 +86,10 @@ def prepare_from_data_single_label(logger=None, n_data=100, debug=False, synthet
         return dataset
     else:
         return (
-            lambda f : prepare_from_data.log_likelihood_dataset(f, data_train, log_likelihood, ll_fun_wants_log_domain=True),
+            lambda f : prepare_from_data.log_likelihood_dataset(f, data_train, log_likelihood, logger, ll_fun_wants_log_domain=True),
             lambda f : prepare_from_data.posterior_marginals(f, data_test, marginals_function), 
             lambda marginals : prepare_from_data_chain.compute_error_nlm(marginals, data_test),
-            lambda f : prepare_from_data.log_likelihood_dataset(f, data_test, log_likelihood, ll_fun_wants_log_domain=True),
+            lambda f : prepare_from_data.log_likelihood_dataset(f, data_test, log_likelihood, logger, ll_fun_wants_log_domain=True),
             prepare_from_data.average_marginals, 
             prepare_from_data_chain.write_marginals,
             lambda marginals_file : prepare_from_data_chain.read_marginals(marginals_file, data_test),

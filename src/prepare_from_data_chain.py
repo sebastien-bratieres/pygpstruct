@@ -106,10 +106,10 @@ def prepare_from_data_chain(data_indices_train, data_indices_test, data_folder, 
         if native_implementation_found:
             chain_forwards_backwards_native.init_kappa(max_T)
             return (
-                lambda f : prepare_from_data.log_likelihood_dataset(f, data_train, log_likelihood_function_native, False),  # that's ll_fun_wants_log_domain=False
+                lambda f : prepare_from_data.log_likelihood_dataset(f, data_train, log_likelihood_function_native, logger, ll_fun_wants_log_domain=False),  # that's ll_fun_wants_log_domain=False
                 lambda f : prepare_from_data.posterior_marginals(f, data_test, marginals_function), 
                 lambda marginals : compute_error_nlm(marginals, data_test),
-                lambda f : prepare_from_data.log_likelihood_dataset(f, data_test, log_likelihood_function_native, False), # that's ll_fun_wants_log_domain=False
+                lambda f : prepare_from_data.log_likelihood_dataset(f, data_test, log_likelihood_function_native, logger, ll_fun_wants_log_domain=False), # that's ll_fun_wants_log_domain=False
                 prepare_from_data.average_marginals, 
                 write_marginals,
                 lambda marginals_file : read_marginals(marginals_file, data_test),
@@ -122,10 +122,10 @@ def prepare_from_data_chain(data_indices_train, data_indices_test, data_folder, 
         log_likelihood_function_numba.temp_array_1 = np.empty((n_labels))
         log_likelihood_function_numba.temp_array_2 = np.empty((n_labels))
         return (
-            lambda f : prepare_from_data.log_likelihood_dataset(f, data_train, log_likelihood_function_numba, True),
+            lambda f : prepare_from_data.log_likelihood_dataset(f, data_train, log_likelihood_function_numba, logger, ll_fun_wants_log_domain=True),
             lambda f : prepare_from_data.posterior_marginals(f, data_test, marginals_function), 
             lambda marginals : compute_error_nlm(marginals, data_test),
-            lambda f : prepare_from_data.log_likelihood_dataset(f, data_test, log_likelihood_function_numba, True),
+            lambda f : prepare_from_data.log_likelihood_dataset(f, data_test, log_likelihood_function_numba, logger, ll_fun_wants_log_domain=True),
             prepare_from_data.average_marginals, 
             write_marginals,
             lambda marginals_file : read_marginals(marginals_file, data_test),
