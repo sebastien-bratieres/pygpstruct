@@ -395,7 +395,7 @@ def update_theta_aux_surr_new(theta, ff, lik_fn, Kfn, theta_Lprior, n_train, n_l
     # construct eta
     logger.debug('construct eta')
     eta = ancillaries_theta.chol_R.solve_triangular(ff) \
-        + ancillaries_theta.chol_R.T().dot(identity(1/aux_var).dot(g))# requires solve_triangular, S.inv
+        - ancillaries_theta.chol_R.T().dot(identity(1/aux_var).dot(g))# requires solve_triangular, S.inv
     # OPTIMIZE can certainly optimize Sinv.dot(g) when S = alpha* I
     # note identity(1/aux_var) = Sinv
     
