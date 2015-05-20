@@ -51,15 +51,24 @@ def add_marginals(x,y):
     return x+y
     
 import numba
+import warnings
 #@numba.jit           
-def log_likelihood_dataset(f, dataset, log_likelihood_datapoint, ll_fun_wants_log_domain):
+def log_likelihood_dataset(f, dataset, log_likelihood_datapoint, logger, ll_fun_wants_log_domain):
     """
     f : log-domain potentials
     ll_fun_wants_log_domain : whether or not the log-likelihood function needs f to be in log-domain (this is false only for the native chain LL implementation)
     """
     #print("f.dtype : %s" % f.dtype)
+    #import hashlib
+    #print("before " + str(int(hashlib.sha1(f.view(np.uint8)).hexdigest(), 16)))
     if not ll_fun_wants_log_domain:
-        f = np.exp(f) # changing semantics of f instead of inserting if's on edge_pot=... and node_pot=...
+        try:
+            with warnings.catch_warnings():
+                warnings.filterwarnings('error')
+                f = np.exp(f) # changing semantics of f instead of inserting if's on edge_pot=... and node_pot=...
+        except RuntimeWarning as rtw:
+            logger.debug("RuntimeWarning: " + str(rtw))
+    #print("after " + str(int(hashlib.sha1(f.view(np.uint8)).hexdigest(), 16)))
     ll = 0
     edge_pot = f[dataset.binaries]
 #    print(dataset.binaries)
