@@ -220,7 +220,7 @@ class gram_compact():
         np.testing.assert_array_almost_equal(self.gram_unary, np.tril(self.gram_unary)) # assert gram_unary is lower triangular
         if type(v) is gram_compact:
             return gram_compact(gram_compact.solve_cholesky_lower_basic(self.gram_unary, v.gram_unary),
-                                v.gram_binary_scalar / self.gram_binary_scalar,
+                                v.gram_binary_scalar / (self.gram_binary_scalar ** 2),
                                 self.n_labels) # result is no longer lower triangular like self
         else:
             assert(v.shape[0] == (self.n_labels * self.n + self.n_labels ** 2))
@@ -285,8 +285,8 @@ class gram_compact():
         return gram_compact(self.gram_unary - right.gram_unary, self.gram_binary_scalar - right.gram_binary_scalar, self.n_labels)
 
     @staticmethod
-    def identity(n_train, n_labels, __aux_var):
-        return gram_compact(__aux_var * np.eye(n_train, n_train), __aux_var, n_labels) 
+    def identity(n_train, n_labels, scale):
+        return gram_compact(scale * np.eye(n_train, n_train), scale, n_labels) 
         
 if __name__ == "__main__":
     import numpy
@@ -309,6 +309,7 @@ if __name__ == "__main__":
     v = learn_predict.dtype_for_arrays(np.random.rand(n * n_labels + n_labels **2))
     k_compact = gram_compact(k_unary, k_binary_scalar, n_labels)
     
+    # test constructor, .expand()
     np.testing.assert_almost_equal(
         k_compact.expand().dot(v),
         gram_compact(k_unary, k_binary_scalar, n_labels).dot(v),
@@ -317,10 +318,12 @@ if __name__ == "__main__":
     k_unary = learn_predict.dtype_for_arrays(np.random.rand(n, n)) # now square
     k_unary = k_unary.T.dot(k_unary) # make it pos def
     k_compact = gram_compact(k_unary, k_binary_scalar, n_labels)
+    # test .T_solve
     np.testing.assert_almost_equal(
         np.linalg.solve(k_compact.expand().T, v),
         gram_compact(k_unary, k_binary_scalar, n_labels).T_solve(v),
         decimal=5)
+    # test .solve
     np.testing.assert_almost_equal(
         np.linalg.solve(k_compact.expand(), v),
         gram_compact(k_unary, k_binary_scalar, n_labels).solve(v),
@@ -329,6 +332,14 @@ if __name__ == "__main__":
     L = gram_compact(k_unary_lower, np.sqrt(k_binary_scalar), n_labels)
     A = gram_compact(k_unary_lower.dot(k_unary_lower.T), k_binary_scalar, n_labels)
     
+    # test .solve_triangular
+    # .solve and .solve_triangular should give equal results
+    np.testing.assert_almost_equal(
+        L.solve_triangular(v),
+        np.linalg.solve(L.expand(), v),
+        decimal=5)
+    
+    # test .cholesky
     np.testing.assert_almost_equal(
         L.expand(),
         A.cholesky().expand(),
@@ -340,10 +351,27 @@ if __name__ == "__main__":
         A.expand(),
         decimal=5)
     
+    # test .solve_chol_lower_basic
+    # A * solve_chol(L, C) == A * A^-1 C == C
+    C = np.random.rand(n * n_labels + n_labels **2, n * n_labels + n_labels **2)
+    np.testing.assert_almost_equal(
+        A.expand().dot(gram_compact.solve_cholesky_lower_basic(L.expand(), C)),
+        C,
+        decimal=5)
+
+    # test .solve_chol_lower(vector)
+    # solve_chol(L, v) == A^-1 v == L^-T L^-1 v
     np.testing.assert_almost_equal(
         L.solve_cholesky_lower(v),
         L.T_solve(L.solve(v)),
-        decimal=4)
+        decimal=5)
+
+    # test .solve_chol_lower(matrix)
+    # solve_chol(L, A) == I
+    np.testing.assert_almost_equal(
+        L.solve_cholesky_lower(A).expand(),
+        gram_compact.identity(n, n_labels, 1.0).expand(),
+        decimal=6)
     np.testing.assert_almost_equal(
         A.solve(v),
         np.linalg.solve(A.expand(), v),
@@ -354,30 +382,65 @@ if __name__ == "__main__":
         np.linalg.solve(A.expand(), v),
         decimal=4)
     
+    # test .solve_chol_lower
     np.testing.assert_almost_equal(
         L.solve_cholesky_lower(v),
         A.solve(v),
         decimal=4)
+    # test .cholesky_T
     np.testing.assert_almost_equal(
         np.linalg.cholesky(k_compact.expand()).T,
         gram_compact(k_unary, k_binary_scalar, n_labels).cholesky_T().expand(),
         decimal=5)
 
+    # test .inv_add_diag_cholesky_T
     s = 7
     np.testing.assert_almost_equal(
         np.linalg.cholesky(np.linalg.inv(k_compact.expand()) 
             + np.eye(n_labels * n + n_labels ** 2) * s).T,
         gram_compact(k_unary, k_binary_scalar, n_labels).inv_add_diag_cholesky_T(s).expand(),
         decimal=5)
+    # test .T_dot
     np.testing.assert_almost_equal(
         k_compact.expand().T.dot(v),
         gram_compact(k_unary, k_binary_scalar, n_labels).T_dot(v),
         decimal=5) # test works because this k_unary is not symmetric
+    # test .diag_log_sum
     np.testing.assert_almost_equal(
         np.sum(np.log(np.diag(k_compact.expand()))),
         gram_compact(k_unary, k_binary_scalar, n_labels).diag_log_sum(),
-        decimal=4)
+        decimal=6)
+    
+    # test .dot(vector)
+    np.testing.assert_almost_equal(
+        A.dot(v),
+        A.expand().dot(v), # using np.ndarray.dot
+        decimal=6)
+    
+    # test .dot(matrix)
+    np.testing.assert_almost_equal(
+        A.dot(A).expand(),
+        A.expand().dot(A.expand()), # using np.ndarray.dot
+        decimal=6)
 
+    #test .__add__
+    np.testing.assert_almost_equal(
+        (A + L).expand(),
+        A.expand() + L.expand(), # using np.ndarray.__add__
+        decimal=7)
+        
+    # test .__sub__
+    np.testing.assert_almost_equal(
+        (A - L).expand(),
+        A.expand() - L.expand(), # using np.ndarray.__sub__
+        decimal=7)
+
+    # test .identity
+    np.testing.assert_almost_equal(
+        gram_compact.identity(n_train = 10, n_labels = 5, scale = 7).expand(),
+        7.0 * np.eye(10 * 5 + 5 ** 2),
+        decimal = 8)
+        
     # test ARD exponential kernel
     X_train = np.array([[0]])
     X_test = np.array([[3]])
