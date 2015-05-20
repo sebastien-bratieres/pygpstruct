@@ -374,6 +374,8 @@ def eval_particle_aux_surr(pp, Lpstar_min, lik_fn, theta_Lprior, theta_unchanged
         
 import kernels
 import gc
+import numpy.testing
+import numpy.linalg
 def update_theta_aux_surr_new(theta, ff, lik_fn, Kfn, theta_Lprior, n_train, n_labels, logger, slice_width=10, aux=0.1):
     class pp:
         pass
@@ -402,6 +404,8 @@ def update_theta_aux_surr_new(theta, ff, lik_fn, Kfn, theta_Lprior, n_train, n_l
     pp.pos = theta
     pp.ancillaries_theta = ancillaries_theta
     pp.f = ff
+    pp.lik_fn_ff = lik_fn(pp.f) # compute p(f|D)
+    
     # initial evaluation of Lpstar and on-sliceness
     logger.debug('initial evaluation of Lpstar and on-sliceness')
     eval_particle_aux_surr_new(pp, np.NINF, lik_fn, theta_Lprior, ancillaries_theta_fn, theta_unchanged = True) # theta hasn't moved yet, don't recompute covariances
@@ -418,13 +422,10 @@ def update_theta_aux_surr_new(theta, ff, lik_fn, Kfn, theta_Lprior, n_train, n_l
     # update f from new theta, ancillaries(new theta), g, eta
     logger.debug('update f')
     m = pp.ancillaries_theta.K.dot(pp.ancillaries_theta.Zinv_g)
-    pp.f = pp.ancillaries_theta.chol_R.dot(eta) + m # requires from gram_compact: minus matrix, dot matrix, solve_chol matrix
+    f = pp.ancillaries_theta.chol_R.dot(eta) + m # requires from gram_compact: minus matrix, dot matrix, solve_chol matrix
     pos = pp.pos
-    f = pp.f
-    lik_fn_ff = pp.lik_fn_ff
-    del pp
-    gc.collect()
-    return (pos, f, lik_fn_ff)
+    #lik_fn_ff = pp.lik_fn_ff # seems WRONG! must recompute lik_fn at this point, cos f new !!
+    return (pos, f, lik_fn(f)) # immediately afterwards, in learn_predict, gc.collect() will dispose of pp's memory (out of scope)
 
 def eval_particle_aux_surr_new(pp, Lpstar_min, lik_fn, theta_Lprior, ancillaries_theta_fn, theta_unchanged = False):
     Ltprior = theta_Lprior(pp.pos) # compute p(theta)
@@ -433,8 +434,6 @@ def eval_particle_aux_surr_new(pp, Lpstar_min, lik_fn, theta_Lprior, ancillaries
         pp.on_slice = False
         pp.Lpstar = np.NINF
         return
-
-    pp.lik_fn_ff = lik_fn(pp.f) # compute p(f|D)
 
     if not theta_unchanged: # recompute ancillaries_theta
         pp.ancillaries_theta = ancillaries_theta_fn(pp.pos)
@@ -446,14 +445,28 @@ def eval_particle_aux_surr_new(pp, Lpstar_min, lik_fn, theta_Lprior, ancillaries
     pp.on_slice = (pp.Lpstar >= Lpstar_min)
     
 def ancillaries_theta_complete(theta, Kfn, S, g):
+    """
+    computes K_theta, chol_Z, chol_R, Zinv_g
+    """
     class ancillaries_theta:
         pass
     ancillaries_theta.K = Kfn(theta)
     ancillaries_theta.chol_Z = (ancillaries_theta.K + S).cholesky()
     ancillaries_theta.chol_R = (S - S.dot(ancillaries_theta.chol_Z.solve_cholesky_lower(S))).cholesky()
+    
+#    numpy.testing.assert_almost_equal(
+#        ancillaries_theta.chol_R.expand(),
+#        numpy.linalg.cholesky(numpy.linalg.inv((numpy.linalg.inv(ancillaries_theta.K.expand()) + numpy.linalg.inv(S.expand())))),
+#        decimal=4
+#    )
+
     del S # order of previous statements important; so that I can de-reference S as soon as possible (since this will impact the max mem usage)
-    gc.collect()
+    if (ancillaries_theta.K.gram_unary.nbytes > 1e5) 
+    # when handling large data, garbage collection at this point reduces the max mem usage, and has little impact on runtime
+    # when handling small data, should avoid gc.collect() here because it lasts on the order of seconds
+        gc.collect()
     ancillaries_theta.Zinv_g = ancillaries_theta.chol_Z.solve_cholesky_lower(g)
+#    numpy.testing.assert_almost_equal((ancillaries_theta.K + S).dot(ancillaries_theta.Zinv_g), g, decimal=5) # test Z * Z^-1 * g = g
     return ancillaries_theta
 
 """
