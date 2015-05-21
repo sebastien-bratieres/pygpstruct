@@ -49,7 +49,10 @@ def compute_lower_chol_k(kernel, lhp, X_train, n_labels):
     if ("unary" in lhp and "binary" in lhp):
         lower_chol_k_compact = gram_compact(np.linalg.cholesky(np.exp(lhp["unary"]) * k_unary), np.sqrt(np.exp(lhp["binary"])), n_labels)
     elif ("alpha" in lhp and "lambda" in lhp):
-        lower_chol_k_compact = gram_compact(np.linalg.cholesky(np.exp(lhp["alpha"]) * k_unary), np.sqrt(np.exp(lhp["alpha"]) + lhp["lambda"]), n_labels)
+        lower_chol_k_compact = gram_compact(np.linalg.cholesky(np.exp(lhp["alpha"]) * k_unary), np.exp(0.5 * (lhp["alpha"] + lhp["lambda"])), n_labels)
+        # K = alpha ( k_x + lambda k_y) = exp(log alpha) + exp(log alpha+ log lambda) k_y
+        # so K is block-wise: exp(log alpha) * gram_unary, exp(log alpha+ log lambda) * gram_binary, with gram_binary=I
+        # so chol_K consists of block-wise: chol(exp(log alpha) * gram_unary), sqrt(exp(log alpha+ log lambda)) * chol(I) = exp(0.5 * (...)) * I
     else:
         raise NameError("Unknown parameterization for kernel")
     return lower_chol_k_compact
