@@ -44,7 +44,7 @@ def eval_particle_simple(pp, lik_fn, theta_Lprior, Lpstar_min,
         return 
     L = Lfn(pp.pos) # L = lower chol K_theta
     Lfprior = -0.5 * pp.ff.T.dot(L.solve_cholesky_lower(pp.ff)) - L.diag_log_sum(); # + const # this is log p(f|theta)
-    # log(p(f|theta)) = log(N(pp.ff ; 0, U_theta)) = -1/2 f.T (L.T.dot(L))^1 f - log(sqrt(2 * pi * det(L.T.dot(L)))) 
+    # log(p(f|theta)) = log(N(pp.ff ; 0, K_theta)) = -1/2 f.T (L.T.dot(L))^-1 f - log(sqrt(2 * pi * det(L.T.dot(L)))) 
 
     pp.lik_fn_ff = lik_fn(pp.ff)
     pp.Lpstar = pp.lik_fn_ff + Lfprior + Ltprior # log p(x|f) + log p(f|theta) + log p(theta)
@@ -195,7 +195,7 @@ def slice_sweep(particle, slice_fn, sigma=1, step_out=True):# should not need to
 
 # SURROGATE DATA METHOD
 
-def update_theta_aux_surr(theta, ff, lik_fn, Kfn, theta_Lprior, slice_width=10, aux=0.1):
+def update_theta_aux_surr_old(theta, ff, lik_fn, Kfn, theta_Lprior, slice_width=10, aux=0.1):
 # %UPDATE_THETA_AUX_SURR MCMC update to GP hyper-param based on aux. noisy vars
 # %
 # %     [theta, ff] = update_theta_aux_noise(theta, ff, lik_fn, Kfn, aux, theta_Lprior);
@@ -286,7 +286,7 @@ def update_theta_aux_surr(theta, ff, lik_fn, Kfn, theta_Lprior, slice_width=10, 
     # Slice sample update of theta|g,nu
     slice_fn = lambda pp, Lpstar_min : eval_particle_aux_surr(pp, Lpstar_min, lik_fn, theta_Lprior)
     # Compute current log-prob (up to constant) needed by slice sampling:
-    eval_particle_aux_surr(pp, np.NINF, lik_fn, theta_Lprior, theta_unchanged = True) # theta hasn't moved yet, don't recompute covariances
+    eval_particle_aux_surr_old(pp, np.NINF, lik_fn, theta_Lprior, theta_unchanged = True) # theta hasn't moved yet, don't recompute covariances
     assert(pp.on_slice)
     if False:
         print("after eval_particle_aux_surr")
@@ -337,7 +337,7 @@ def assert_triu(a):
     import numpy.testing
     numpy.testing.assert_almost_equal(a.gram_unary, np.triu(a.gram_unary))
     
-def eval_particle_aux_surr(pp, Lpstar_min, lik_fn, theta_Lprior, theta_unchanged = False):
+def eval_particle_aux_surr_old(pp, Lpstar_min, lik_fn, theta_Lprior, theta_unchanged = False):
     #print("calling eval particle, theta_unchanged=%g" % theta_unchanged)
     # Prior on theta
     Ltprior = theta_Lprior(pp.pos)
@@ -376,7 +376,7 @@ import kernels
 import gc
 import numpy.testing
 import numpy.linalg
-def update_theta_aux_surr_new(theta, ff, lik_fn, Kfn, theta_Lprior, n_train, n_labels, logger, slice_width=10, aux=0.1):
+def update_theta_aux_surr(theta, ff, lik_fn, Kfn, theta_Lprior, n_train, n_labels, logger, slice_width=10, aux=0.1):
     class pp:
         pass
     pp.pos = theta
@@ -408,7 +408,7 @@ def update_theta_aux_surr_new(theta, ff, lik_fn, Kfn, theta_Lprior, n_train, n_l
     
     # initial evaluation of Lpstar and on-sliceness
     logger.debug('initial evaluation of Lpstar and on-sliceness')
-    eval_particle_aux_surr_new(pp, np.NINF, lik_fn, theta_Lprior, ancillaries_theta_fn, theta_unchanged = True) # theta hasn't moved yet, don't recompute covariances
+    eval_particle_aux_surr(pp, np.NINF, lik_fn, theta_Lprior, ancillaries_theta_fn, theta_unchanged = True) # theta hasn't moved yet, don't recompute covariances
     assert(pp.on_slice)
     if False:
         print("after eval_particle_aux_surr")
@@ -416,7 +416,7 @@ def update_theta_aux_surr_new(theta, ff, lik_fn, Kfn, theta_Lprior, n_train, n_l
 
     # update theta by slice sampling (1 sweep)
     logger.debug('slice sampling sweep')
-    slice_fn = lambda pp, Lpstar_min : eval_particle_aux_surr_new(pp, Lpstar_min, lik_fn, theta_Lprior, ancillaries_theta_fn)
+    slice_fn = lambda pp, Lpstar_min : eval_particle_aux_surr(pp, Lpstar_min, lik_fn, theta_Lprior, ancillaries_theta_fn)
     slice_sweep(pp, slice_fn, sigma = abs(slice_width), step_out = (slice_width > 0))
 
     # update f from new theta, ancillaries(new theta), g, eta
@@ -427,7 +427,7 @@ def update_theta_aux_surr_new(theta, ff, lik_fn, Kfn, theta_Lprior, n_train, n_l
     #lik_fn_ff = pp.lik_fn_ff # seems WRONG! must recompute lik_fn at this point, cos f new !!
     return (pos, f, lik_fn(f)) # immediately afterwards, in learn_predict, gc.collect() will dispose of pp's memory (out of scope)
 
-def eval_particle_aux_surr_new(pp, Lpstar_min, lik_fn, theta_Lprior, ancillaries_theta_fn, theta_unchanged = False):
+def eval_particle_aux_surr(pp, Lpstar_min, lik_fn, theta_Lprior, ancillaries_theta_fn, theta_unchanged = False):
     Ltprior = theta_Lprior(pp.pos) # compute p(theta)
     #    print(Ltprior)
     if Ltprior == np.NINF:

@@ -199,7 +199,7 @@ def learn_predict_gpstruct( prepare_from_data,
                     theta_Lprior = lambda _lhp_target : 0 if (np.all(_lhp_target>np.log(1e-3)) and np.all(_lhp_target<np.log(1e2))) else np.NINF,
                     )
             elif (hp_sampling_mode == 'surrogate data'):
-                (lhp_target, current_f, current_ll_train) = slice_sample_hyperparameters.update_theta_aux_surr(
+                (lhp_target, current_f, current_ll_train) = slice_sample_hyperparameters.update_theta_aux_surr_old(
                     theta = get_lhp_target(lhp), # starting values 
                     ff = current_f, 
                     lik_fn = ll_train, 
@@ -207,7 +207,7 @@ def learn_predict_gpstruct( prepare_from_data,
                     theta_Lprior = lambda _lhp_target : 0 if (np.all(_lhp_target>np.log(1e-3)) and np.all(_lhp_target<np.log(1e2))) else np.NINF,
                     )
             elif (hp_sampling_mode == 'surrogate data new'):
-                (lhp_target, current_f, current_ll_train) = slice_sample_hyperparameters.update_theta_aux_surr_new(
+                (lhp_target, current_f, current_ll_train) = slice_sample_hyperparameters.update_theta_aux_surr(
                     theta = get_lhp_target(lhp), # starting values 
                     ff = current_f, 
                     lik_fn = ll_train, 
