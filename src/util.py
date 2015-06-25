@@ -1,3 +1,46 @@
+def merge_dict(d1, d2):
+    d1 = d1.copy()
+    d1.update(d2)
+    return d1
+
+def kron_list(major, minor):
+    """ returns Kronecker products of matrices (major kron minor). 
+    both minor and major are expected to be matrices in list-format (row-dominant), 
+    that is lists of rows, each row a list of elements.
+    
+    Usage example:
+        a = [{ 'prior' : 'uniform'}, {'prior': 'Gaussian'}]
+        b = [{'method' : 'ss'}, {'method' : 'pw'}, {'method' : 'sd'}]
+        c = [{'random_seed' : i} for i in range(32)]
+        table = kron_list(to_column(c), kron_list(to_row(a), to_row(b)))
+    """
+    result = []
+    for major_row in major:
+        for minor_row in minor:
+            result_row = []
+            for major_elt in major_row:
+                for minor_elt in minor_row:
+                    result_row.append(merge_dict(major_elt, minor_elt))
+            result.append(result_row) 
+    return result
+
+# utilities to convert lists to rows resp columns
+to_column = lambda l : list(map(lambda x :[x], l))
+to_row = lambda l : [l]
+
+'''
+# complicated implementation, dismiss
+def kron_list(major, minor):
+    result = []
+    for major_row in major:
+        for minor_row in minor:
+            result.append(list(
+                itertools.chain(
+                    *[list(map(lambda minor_elt : merge_dict(major_elt, minor_elt), minor_row)) for major_elt in major_row]
+                    )))
+    return result
+'''
+
 def log_code_hash():
     '''produce log string documenting status/ commit hash of current source code'''
     import subprocess
