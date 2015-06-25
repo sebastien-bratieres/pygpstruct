@@ -23,11 +23,12 @@ import prepare_from_data
 def prepare_from_data_single_label(logger=None, n_data=100, debug=False, synthetic_data_type='5-class', noise_feature_weight=1):
     class dataset:
         pass
-    dataset.N = n_data
-    dataset.object_size = np.ones((dataset.N), dtype=np.int)
-    dataset.n_points = dataset.N
-    dataset.Y = []
-    dataset.unaries = []
+    if synthetic_data_type[0] != 'predefined':
+        dataset.N = n_data
+        dataset.object_size = np.ones((dataset.N), dtype=np.int)
+        dataset.n_points = dataset.N
+        dataset.Y = []
+        dataset.unaries = []
     if synthetic_data_type=='5-class':
         dataset.n_labels = 5
         n_features = dataset.n_labels
@@ -55,9 +56,10 @@ def prepare_from_data_single_label(logger=None, n_data=100, debug=False, synthet
             dataset.X[n, dataset.Y[n][0]] = 1 
             dataset.X[n, dataset.n_labels:] = np.random.rand(dataset.n_labels)*noise_feature_weight # 5 last features are noise
     elif (synthetic_data_type[0] == 'predefined'):
-        dataset.n_labels = synthetic_data_type[1].n_labels
-        dataset.X = synthetic_data_type[1].X
-        dataset.Y = synthetic_data_type[1].Y
+        dataset = synthetic_data_type[1]
+        #dataset.n_labels = synthetic_data_type[1].n_labels
+        #dataset.X = synthetic_data_type[1].X
+        #dataset.Y = synthetic_data_type[1].Y
     else:
         raise Exception('you mistyped the synthetic data set you want')
 
