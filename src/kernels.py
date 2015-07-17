@@ -30,16 +30,15 @@ def kernel_exponential(X_train, X_test, lhp, no_jitter):
 import numba
 @numba.jit
 def ard_outer_loop(n_data_train, n_data_test, variances):
-    p = np.empty((n_data_train, n_data_test))
     for i_train in range(n_data_train):
         for i_test in range(n_data_test):
-            p[i_train, i_test] = np.sum(my_func(kernel_exponential_ard.row_train_cache[i_train], kernel_exponential_ard.row_test_cache[i_test], variances))
-    k_unary = learn_predict.dtype_for_arrays(np.exp( (-1/2) * p))
-    return k_unary
+            kernel_exponential_ard.p[i_train, i_test] = np.sum(ard_inner_func(kernel_exponential_ard.row_train_cache[i_train], kernel_exponential_ard.row_test_cache[i_test], variances))
+    kernel_exponential_ard.p = learn_predict.dtype_for_arrays(np.exp(kernel_exponential_ard.p))
+    return kernel_exponential_ard.p
 
 @numba.vectorize(['float64(float64, float64, float64)', 'float32(float32, float32, float32)'])
-def my_func(a, b, v):
-    return (a-b)*(a-b)/v
+def ard_inner_func(a, b, v):
+    return (-1/2) * (a-b)**2/v
 
 
 import scipy.spatial.distance
@@ -57,6 +56,7 @@ def kernel_exponential_ard(X_train, X_test, lhp, no_jitter):
         n_data_test = X_test.shape[0]
         
         if not hasattr(kernel_exponential_ard, 'row_test_cache'):
+            kernel_exponential_ard.p = np.empty((n_data_train, n_data_test))
             kernel_exponential_ard.row_test_cache = [None] * n_data_test # initialize empty list to memoize results of repeated X_test.getrow
             for i_test in range(n_data_test):
                 kernel_exponential_ard.row_test_cache[i_test] = X_test.getrow(i_test).toarray()  # stores result for later lookup 
