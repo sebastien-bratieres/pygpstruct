@@ -95,3 +95,76 @@ def launch_qsub_job(params,
         else:
             print(output)
             raise subprocess.CalledProcessError(exitCode, cmd='TODO', output=output)
+            
+            
+# code block mostly identical, taken from util_experiments where it has never been used
+def run_experiment_fear(completed_arguments_dict, prepare_from_data_type):
+    if prepare_from_data_type == 'synthetic':
+        raise("not implemented yet: prepare_from_data_synthetic")
+    elif prepare_from_data_type == 'chain':
+        prepare_from_data_type = prepare_from_data_chain
+    completed_arguments_dict["console_log"]='False' # no need for that in Fear case
+    result_prefix = completed_arguments_dict["result_prefix"]
+    
+    import subprocess
+    import os
+    import sys
+    
+    try:
+        print('making path %s' % result_prefix)
+        os.makedirs(result_prefix)
+    except OSError as err:
+        if err.errno!=17:
+            raise
+
+
+    python_script_name = os.path.join(result_prefix, "qsub.py")
+    with open(python_script_name, "w") as f:
+        f.write('import sys; sys.path.append(\'/home/mlg/sb358/pygpstruct/src\'); ' + 
+                'import numpy as np; import prepare_from_data_chain; ' + 
+                'import util; util.stop_check((12-0.1)*3600); ' + # stop 360 sec before SGE job will be killed (which is after 12h) to reduce chances of being killed in the middle of a state save operation
+                'prepare_from_data_chain.learn_predict_gpstruct_wrapper(%s, stop_check=util.stop_check);\n'
+                % (', '.join(['%s=%s' % (k, params[k]) for k in sorted(params.keys())]))) 
+    
+    shell_script_name = os.path.join(result_prefix, "qsub.sh")
+    with open(shell_script_name, "w") as f:
+        f.write("#!sh\n")
+        # f.write("source activate py3")
+        f.write('python %s >%s.out 2>%s.err\n' # should replace > by >> 
+                % (python_script_name, python_job_log_file_prefix, python_job_log_file_prefix))            
+
+    for rerun in range(repeat_runs):
+        ssh_command_as_list = ["ssh", "fear", "qsub", "-o", os.path.join(result_prefix, "qsub.out"), "-e", os.path.join(result_prefix, "qsub.err")]
+        if (rerun > 0):
+            ssh_command_as_list.extend(['-hold_jid', str(job_id)]) # if second or higher in a sequence of runs, wait for the previous job to finish
+        ssh_command_as_list.append(shell_script_name)
+        
+        process = subprocess.Popen(ssh_command_as_list, 
+                                       stdout=subprocess.PIPE,
+                                       stderr=subprocess.STDOUT,
+                                       cwd= files_path,
+                                       )
+                # qsub -o $model.fold_$fold.out -e $model.fold_$fold.err $model.sh $fold /bigscratch/sb358/image_segmentation/model_$model.train50/fold_$fold/
+        
+        # Poll process for new output until finished # from # http://stackoverflow.com/questions/4417546/constantly-print-subprocess-output-while-process-is-running
+        while True:
+            nextline = process.stdout.readline().decode('utf-8')
+            import re
+            match = re.match('Your job (\d+) \(".+"\) has been submitted', nextline)
+            if (match != None):
+                job_id = match.group(1)
+                with open("%s.rerun_%s.qsub.jobid" % (log_files_prefix, str(rerun)), "w") as f:
+                    f.write(job_id)
+            if nextline == '' and process.poll() != None:
+                break
+            sys.stdout.write(nextline)
+            sys.stdout.flush()
+
+        output = process.communicate()[0] # communicate returns (stdout, stderr)
+        exitCode = process.returncode
+
+        if (exitCode == 0):
+            pass # return output
+        else:
+            print(output)
+            raise subprocess.CalledProcessError(exitCode, cmd='TODO', output=output)

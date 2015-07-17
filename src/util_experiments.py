@@ -24,81 +24,6 @@ def run_experiment_parallel(completed_arguments_dict, prepare_from_data_type):
     prepare_from_data_type.learn_predict_gpstruct_wrapper(
         **completed_arguments_dict)
 
-# WASDOING for fear:
-# insert run_experiment_fear into if lbview==None block
-# test, debug
-def run_experiment_fear(completed_arguments_dict, prepare_from_data_type):
-    if prepare_from_data_type == 'synthetic':
-        raise("not implemented yet: prepare_from_data_synthetic")
-    elif prepare_from_data_type == 'chain':
-        prepare_from_data_type = prepare_from_data_chain
-    completed_arguments_dict["console_log"]='False' # no need for that in Fear case
-    result_prefix = completed_arguments_dict["result_prefix"]
-    
-    import subprocess
-    import os
-    import sys
-    
-    try:
-        print('making path %s' % result_prefix)
-        os.makedirs(result_prefix)
-    except OSError as err:
-        if err.errno!=17:
-            raise
-
-
-    python_script_name = os.path.join(result_prefix, "qsub.py")
-    with open(python_script_name, "w") as f:
-        f.write('import sys; sys.path.append(\'/home/mlg/sb358/pygpstruct/src\'); ' + 
-                'import numpy as np; import prepare_from_data_chain; ' + 
-                'import util; util.stop_check((12-0.1)*3600); ' + # stop 360 sec before SGE job will be killed (which is after 12h) to reduce chances of being killed in the middle of a state save operation
-                'prepare_from_data_chain.learn_predict_gpstruct_wrapper(%s, stop_check=util.stop_check);\n'
-                % (', '.join(['%s=%s' % (k, params[k]) for k in sorted(params.keys())]))) 
-    
-    shell_script_name = os.path.join(result_prefix, "qsub.sh")
-    with open(shell_script_name, "w") as f:
-        f.write("#!sh\n")
-        # f.write("source activate py3")
-        f.write('python %s >%s.out 2>%s.err\n' # should replace > by >> 
-                % (python_script_name, python_job_log_file_prefix, python_job_log_file_prefix))            
-
-    for rerun in range(repeat_runs):
-        ssh_command_as_list = ["ssh", "fear", "qsub", "-o", os.path.join(result_prefix, "qsub.out"), "-e", os.path.join(result_prefix, "qsub.err")]
-        if (rerun > 0):
-            ssh_command_as_list.extend(['-hold_jid', str(job_id)]) # if second or higher in a sequence of runs, wait for the previous job to finish
-        ssh_command_as_list.append(shell_script_name)
-        
-        process = subprocess.Popen(ssh_command_as_list, 
-                                       stdout=subprocess.PIPE,
-                                       stderr=subprocess.STDOUT,
-                                       cwd= files_path,
-                                       )
-                # qsub -o $model.fold_$fold.out -e $model.fold_$fold.err $model.sh $fold /bigscratch/sb358/image_segmentation/model_$model.train50/fold_$fold/
-        
-        # Poll process for new output until finished # from # http://stackoverflow.com/questions/4417546/constantly-print-subprocess-output-while-process-is-running
-        while True:
-            nextline = process.stdout.readline().decode('utf-8')
-            import re
-            match = re.match('Your job (\d+) \(".+"\) has been submitted', nextline)
-            if (match != None):
-                job_id = match.group(1)
-                with open("%s.rerun_%s.qsub.jobid" % (log_files_prefix, str(rerun)), "w") as f:
-                    f.write(job_id)
-            if nextline == '' and process.poll() != None:
-                break
-            sys.stdout.write(nextline)
-            sys.stdout.flush()
-
-        output = process.communicate()[0] # communicate returns (stdout, stderr)
-        exitCode = process.returncode
-
-        if (exitCode == 0):
-            pass # return output
-        else:
-            print(output)
-            raise subprocess.CalledProcessError(exitCode, cmd='TODO', output=output)
-    
-
 import time
     
 # TODO should always return a JSON file+ stdout recap of call jobs launched, to coordinate hashes with expt parameters
@@ -118,18 +43,16 @@ def run_experiments(lbview=None, prepare_from_data_type = 'synthetic', variable_
         # else reuse job hash, maybe so as to hot-start
 
         completed_arguments_list.append(completed_arguments_dict)
-    print(completed_arguments_list)
-    import sys
-    sys.stdout.flush()
     if lbview != None:
         # need to pass all args in lambda cos otherwise "ValueError: sorry, can't pickle functions with closures"
         asr = lbview.map_async(lambda completed_arguments_dict, prepare_from_data_type=prepare_from_data_type: 
             run_experiment_parallel(completed_arguments_dict, prepare_from_data_type),
                                        completed_arguments_list)
-        return asr
+        return asr # list(zip(asr, completed_arguments_list))
     else:
         for completed_arguments_dict in completed_arguments_list:
             run_experiment_sequential(completed_arguments_dict, prepare_from_data_type) 
+        print(completed_arguments_list)
     
     if require_output:
         # read files to obtain history_hp and history_ll
@@ -172,3 +95,71 @@ def plot_experiments(history_list, default_common_arguments, variable_arguments_
         plt.ylabel('training data log-likelihood')
         plt.xlabel('MCMC step')
         plt.ylim(bottom=y_min)
+
+
+# code to plot figures from file results.txt
+
+import numpy as np
+import matplotlib.pyplot as plt
+import glob
+
+def read_data(file_pattern, data_col, max_display_length):
+
+    data_sets = []
+    #print("file_pattern: " + file_pattern )
+    files = glob.glob( file_pattern )
+    if (files == []):
+        print("Error: no matching files !")
+    else:
+        #print("matching files: " + str(files))
+        pass
+    for file_name in files:
+        if data_col == None:  # matlab
+            data_from_file = np.loadtxt(file_name)
+        else: # python
+            if (file_pattern.endswith(".txt")):
+                data_from_file = np.loadtxt(file_name)[:,data_col]
+            else:
+                with open(file_name, 'rb') as f:
+                    data_from_file = np.fromfile(f, dtype=np.float32)
+                data_from_file = data_from_file.reshape((-1,5))[:,data_col]
+        if (data_from_file.shape[0] < max_display_length):
+            max_display_length = data_from_file.shape[0]
+        data_sets.append(data_from_file)
+    data_sets = [data_from_file[:max_display_length] for data_from_file in data_sets]
+    data = np.vstack(data_sets).T
+    return data
+    
+def plot_data(data, label, ax):#, linestyle):
+    iterations_per_log_line = 1
+    t = np.arange(0,data.shape[0] * iterations_per_log_line, iterations_per_log_line)
+    ax.plot(t, data.mean(axis=1), lw=1, label='%s' % label)#, linestyle=linestyle)#, color='black') 
+
+def make_figure(data_col_list, file_pattern_list, bottom=None, top=None, max_display_length=1e6, save_pdf=False):
+    for data_col in data_col_list: # new figure for each data type/ column
+        fig = plt.figure(figsize=(6,4))
+        ax = fig.add_subplot(111)
+        
+        #linestyles = ['-', '--', '-.', ':']
+        #linestyle_index = 0
+        for (file_pattern_legend, file_pattern) in file_pattern_list: # new curve for each file group
+            data = read_data(file_pattern, data_col, max_display_length)
+            plot_data(data, file_pattern_legend, ax)#, linestyles[linestyle_index])
+            #print(data[-1,:].mean())
+            #linestyle_index += 1
+    
+        ax.set_xlabel('MCMC iterations')
+        data_col_legend = {None: 'Matlab error rate', 
+                           4: 'per-atom average negative log marginal',
+                           3: 'test set error rate, marginalized over f''s', 
+                           2: 'scaled LL test set',
+                           1: 'current error rate on training set',
+                           0: 'current LL train set'}
+        ax.set_ylabel(data_col_legend[data_col])
+        ax.set_ylim(bottom=bottom, top=top)
+        ax.legend() #loc='upper right')
+        
+        if save_pdf:
+            import matplotlib
+            matplotlib.rcParams['pdf.fonttype'] = 42 # to avoid PDF Type 3 fonts in resulting plots, cf http://www.phyletica.com/?p=308
+            fig.savefig('figure.pdf',bbox_inches='tight');
