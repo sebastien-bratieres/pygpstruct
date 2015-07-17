@@ -13,9 +13,6 @@ def update_theta_simple(theta, ff, lik_fn,
     """
     update to GP hyperparam. slice sample theta| f, data. Does not update f, so requires separate procedure to update f (eg elliptical slice sampling).
     """
-
-    #L = Lfn(theta)
-
     # Slice sample theta|ff
     class particle:
         pass
@@ -35,13 +32,10 @@ def eval_particle_simple(pp, lik_fn, theta_Lprior, Lpstar_min,
     L is a precomputed chol(Kfn(pp.pos))
     alternatively, Lfn is a function that will compute L
     """
+    (error, Ltprior, L) = compute_priors(pp, theta_Lprior, Lfn)
+    if error:
+        return
 
-    Ltprior = theta_Lprior(pp.pos)
-    if Ltprior == np.NINF: # save time in case Ltprior is NINF, don't need to run Lfn
-        #print('off slice cos prior limit hit')
-        pp.Lpstar = Ltprior
-        pp.on_slice = False
-        return 
     L = Lfn(pp.pos) # L = lower chol K_theta
     Lfprior = -0.5 * pp.ff.T.dot(L.solve_cholesky_lower(pp.ff)) - L.diag_log_sum(); # + const # this is log p(f|theta)
     # log(p(f|theta)) = log(N(pp.ff ; 0, K_theta)) = -1/2 f.T (L.T.dot(L))^-1 f - log(sqrt(2 * pi * det(L.T.dot(L)))) 
@@ -82,13 +76,10 @@ def eval_particle_aux_chol(pp, nu, lik_fn, theta_Lprior, Lpstar_min,
     L is a precomputed chol(Kfn(pp.pos))
     alternatively, Lfn is a function that will compute L
     """
-
-    Ltprior = theta_Lprior(pp.pos)
-    if Ltprior == np.NINF:
-        pp.on_slice = False
-        pp.Lpstar = np.NINF
+    (error, Ltprior, L) = compute_priors(pp, theta_Lprior, Lfn)
+    if error:
         return
-    L = Lfn(pp.pos)
+    
     ff = L.dot(nu)
 
     pp.lik_fn_ff = lik_fn(ff)
@@ -97,6 +88,20 @@ def eval_particle_aux_chol(pp, nu, lik_fn, theta_Lprior, Lpstar_min,
     pp.L = L
     pp.ff = ff
 
+def compute_priors(pp, theta_Lprior, Lfn):
+    Ltprior = theta_Lprior(pp.pos)
+    if Ltprior == np.NINF:
+        pp.on_slice = False
+        pp.Lpstar = np.NINF
+        return (True, Ltprior, None)
+    try:
+        L = Lfn(pp.pos)
+    except np.linalg.LinAlgError as lae: # catch the case where the resulting kernel matrix is singular
+        pp.on_slice = False
+        pp.Lpstar = np.NINF
+        return (True, Ltprior, None)
+    return (False, Ltprior, L)
+    
 def slice_sweep(particle, slice_fn, sigma=1, step_out=True):# should not need to return particle, can modify in-place
 # %SLICE_SWEEP one set of axis-aligned slice-sampling updates of particle.pos
 # %
@@ -284,7 +289,7 @@ def update_theta_aux_surr_old(theta, ff, lik_fn, Kfn, theta_Lprior, slice_width=
 
 
     # Slice sample update of theta|g,nu
-    slice_fn = lambda pp, Lpstar_min : eval_particle_aux_surr(pp, Lpstar_min, lik_fn, theta_Lprior)
+    slice_fn = lambda pp, Lpstar_min : eval_particle_aux_surr_old(pp, Lpstar_min, lik_fn, theta_Lprior)
     # Compute current log-prob (up to constant) needed by slice sampling:
     eval_particle_aux_surr_old(pp, np.NINF, lik_fn, theta_Lprior, theta_unchanged = True) # theta hasn't moved yet, don't recompute covariances
     assert(pp.on_slice)
