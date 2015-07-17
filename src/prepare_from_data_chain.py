@@ -39,13 +39,15 @@ def learn_predict_gpstruct_wrapper(
     prediction_verbosity=None,
     lhp_init={'unary': np.log(1), 'binary': np.log(0.01), 'jitter' : np.log(1e-4)},
     lhp_gset = (default_get_lhp_target, default_set_lhp_target),
+    lhp_prior = lambda _lhp_target : 0 if (np.all(_lhp_target>np.log(1e-3)) and np.all(_lhp_target<np.log(1e2))) else np.NINF,
     hp_sampling_thinning=1, 
     hp_sampling_mode=None,
     kernel=kernels.kernel_linear,
     random_seed=0,
     stop_check=None,
     native_implementation=False,
-    log_f=False
+    log_f=False,
+    no_hotstart = False
     ):
     if data_folder==None:
         data_folder = './data/%s' % task
@@ -87,10 +89,12 @@ def learn_predict_gpstruct_wrapper(
                            hp_sampling_mode=hp_sampling_mode,
                            lhp_init=lhp_init,
                            lhp_gset=lhp_gset,
+                           lhp_prior=lhp_prior,
                            kernel=kernel,
                            random_seed=random_seed,
                            stop_check=stop_check,
-                           log_f=log_f
+                           log_f=log_f,
+                           no_hotstart=no_hotstart
                            )
 
 def prepare_from_data_chain(data_indices_train, data_indices_test, data_folder, logger, n_labels, n_features_x, native_implementation):
@@ -98,7 +102,8 @@ def prepare_from_data_chain(data_indices_train, data_indices_test, data_folder, 
     
     data_train = loadData(data_folder, n_labels, data_indices_train, n_features_x)
     data_test = loadData(data_folder, n_labels, data_indices_test, n_features_x)
-
+    logger.debug("loaded data from disk")
+    
     # pre-assigning for speed so that there's no memory assingment in the most inner loop of the likelihood computation
     max_T = np.max([data_train.object_size.max(), data_test.object_size.max()])
     

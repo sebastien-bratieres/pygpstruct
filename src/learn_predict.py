@@ -38,10 +38,12 @@ def learn_predict_gpstruct( prepare_from_data,
                             prior=1,
                             lhp_init={'unary': np.log(1), 'binary': np.log(0.01), 'jitter' : np.log(1e-4)},
                             lhp_update = None,
+                            lhp_prior = lambda _lhp_target : 0 if (np.all(_lhp_target>np.log(1e-3)) and np.all(_lhp_target<np.log(1e2))) else np.NINF,
                             kernel=kernels.kernel_exponential,
                             random_seed=0,
                             stop_check=None, 
-                            log_f=False
+                            log_f=False,
+                            no_hotstart = False,
                             ):
     """
     result_prefix should end with the desired character to allow result_prefix + string constructions:
@@ -61,8 +63,20 @@ def learn_predict_gpstruct( prepare_from_data,
     function_args = locals() # store just args passed to function, so as to log them later on
     
     ## test for hotstart
-    if (glob.glob(result_prefix + 'state.pickle') != []): # hotstart
-        hotstart=True # no safety net prevents hotstarting with different parameters. Could do: store parameters dict, check at hotstart that it is identical. Hard to do: just have an "hotstart this" feature which works based on a results folder; implies re-obtain things like dataset, kernel matrices.
+    if (glob.glob(result_prefix + 'state.pickle') != []): 
+        if no_hotstart:
+            hotstart = False
+            try:
+                os.remove(result_prefix + 'state.pickle')
+                os.remove(result_prefix + 'history_hp.bin')
+                os.remove(result_prefix + 'marginals.bin')
+                os.remove(result_prefix + 'results.bin')
+                os.remove(result_prefix + 'log')
+                os.remove(result_prefix + 'history_f.bin')
+            except: 
+                pass        
+        else:
+            hotstart=True # no safety net prevents hotstarting with different parameters. Could do: store parameters dict, check at hotstart that it is identical. Hard to do: just have an "hotstart this" feature which works based on a results folder; implies re-obtain things like dataset, kernel matrices.
     else:
         # make results dir
         # mkdir result_prefix in case it doesnt exist, from http://stackoverflow.com/questions/16029871/how-to-run-os-mkdir-with-p-option-in-python second answer updated !
@@ -188,7 +202,7 @@ def learn_predict_gpstruct( prepare_from_data,
                     lik_fn = ll_train, 
                     # inside Ufn, create a deep copy of lhp to generate U with given _lhp_target, cos we don't want to affect lhp in this ESS loop
                     Lfn = Lfn,
-                    theta_Lprior = lambda _lhp_target : 0 if (np.all(_lhp_target>np.log(1e-3)) and np.all(_lhp_target<np.log(1e2))) else np.NINF,
+                    theta_Lprior = lhp_prior,
                     )
             elif (hp_sampling_mode == 'prior whitening'):
                 (lhp_target, current_f, current_ll_train) = slice_sample_hyperparameters.update_theta_aux_chol(
@@ -196,23 +210,23 @@ def learn_predict_gpstruct( prepare_from_data,
                     ff = current_f, 
                     lik_fn = ll_train, 
                     Lfn = Lfn,
-                    theta_Lprior = lambda _lhp_target : 0 if (np.all(_lhp_target>np.log(1e-3)) and np.all(_lhp_target<np.log(1e2))) else np.NINF,
+                    theta_Lprior = lhp_prior,
                     )
-            elif (hp_sampling_mode == 'surrogate data'):
+            elif (hp_sampling_mode == 'surrogate data old'):
                 (lhp_target, current_f, current_ll_train) = slice_sample_hyperparameters.update_theta_aux_surr_old(
                     theta = get_lhp_target(lhp), # starting values 
                     ff = current_f, 
                     lik_fn = ll_train, 
                     Kfn = Kfn,
-                    theta_Lprior = lambda _lhp_target : 0 if (np.all(_lhp_target>np.log(1e-3)) and np.all(_lhp_target<np.log(1e2))) else np.NINF,
+                    theta_Lprior = lhp_prior,
                     )
-            elif (hp_sampling_mode == 'surrogate data new'):
+            elif (hp_sampling_mode == 'surrogate data'):
                 (lhp_target, current_f, current_ll_train) = slice_sample_hyperparameters.update_theta_aux_surr(
                     theta = get_lhp_target(lhp), # starting values 
                     ff = current_f, 
                     lik_fn = ll_train, 
                     Kfn = Kfn,
-                    theta_Lprior = lambda _lhp_target : 0 if (np.all(_lhp_target>np.log(1e-3)) and np.all(_lhp_target<np.log(1e2))) else np.NINF,
+                    theta_Lprior = lhp_prior,
                     n_train = n_train, 
                     n_labels = n_labels,
                     logger = logger
