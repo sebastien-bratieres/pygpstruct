@@ -4,7 +4,7 @@ import scipy
 
 import scipy.sparse.csr
 def kernel_linear(X_train, X_test, lhp, no_jitter):
-    global dtype
+#    global dtype
     p = np.dot(X_train,X_test.T)
     if isinstance(p, scipy.sparse.csr.csr_matrix):
         p = p.toarray() # cos if using X_train sparse vector, p will be a csr_matrix -- incidentally in this case the resulting k_unary cannot be flattened, it will result in a (1,X) 2D matrix !
@@ -17,7 +17,7 @@ def kernel_exponential(X_train, X_test, lhp, no_jitter):
     $k_\text{exponential}(\mathbf{x},\mathbf{x'}) = \exp({-\frac{1}{2 \ell ^2} \Vert \mathbf{x} - \mathbf{x'} \Vert ^2})$  
     $k_\text{exponential ARD}(\mathbf{x},\mathbf{x'}) = \exp({-\frac{1}{2} \sum_i \frac{1}{\sigma_i ^2} ( \mathbf{x}_i - \mathbf{x'}_i ) ^2})$  
     """
-    global dtype
+#    global dtype
     p = sklearn.metrics.pairwise.euclidean_distances(X_train, X_test, squared=True)
     # sames as scipy.spatial.distance.cdist(X_train,X_test, 'sqeuclidean')
     # but works with Scipy sparse and Numpy dense arrays
@@ -26,22 +26,56 @@ def kernel_exponential(X_train, X_test, lhp, no_jitter):
     k_unary = learn_predict.dtype_for_arrays(np.exp( -(1/2) * 1/(np.exp(lhp["length_scale"])**2 ) * p))
     return jitterize(k_unary, lhp, no_jitter)
 
+
+import numba
+@numba.jit
+def ard_outer_loop(n_data_train, n_data_test, variances):
+    p = np.empty((n_data_train, n_data_test))
+    for i_train in range(n_data_train):
+        for i_test in range(n_data_test):
+            p[i_train, i_test] = np.sum(my_func(kernel_exponential_ard.row_train_cache[i_train], kernel_exponential_ard.row_test_cache[i_test], variances))
+    k_unary = learn_predict.dtype_for_arrays(np.exp( (-1/2) * p))
+    return k_unary
+
+@numba.vectorize(['float64(float64, float64, float64)', 'float32(float32, float32, float32)'])
+def my_func(a, b, v):
+    return (a-b)*(a-b)/v
+
+
 import scipy.spatial.distance
 def kernel_exponential_ard(X_train, X_test, lhp, no_jitter):
     """
     variance parameter = \sigma_i^2
     cf unit test below for comparison with kernel_exponential_unary
+    will attempt to convert sparse X_train, X_test to np.array, risking a memory error: use with caution with large arrays!
+    sparse matrix optimization works on assumption that X_train, X_test don't change between calls
     """
-    global dtype
-    p = scipy.spatial.distance.cdist(X_train, X_test, metric='mahalanobis', VI=np.diag(1/np.exp(lhp['variances'])))
-    k_unary = learn_predict.dtype_for_arrays(np.exp( (-1/2) * np.square(p)))
+    #print("kernel evaluation, lhp=%s" % str(lhp))
+    variances = np.exp(lhp['variances'])
+    if isinstance(X_train,scipy.sparse.coo_matrix) :
+        n_data_train = X_train.shape[0]
+        n_data_test = X_test.shape[0]
+        
+        if not hasattr(kernel_exponential_ard, 'row_test_cache'):
+            kernel_exponential_ard.row_test_cache = [None] * n_data_test # initialize empty list to memoize results of repeated X_test.getrow
+            for i_test in range(n_data_test):
+                kernel_exponential_ard.row_test_cache[i_test] = X_test.getrow(i_test).toarray()  # stores result for later lookup 
+                # TODO works only for segmentation, where it is feasible to do .toarray on feature vector!
+            kernel_exponential_ard.row_train_cache = [None] * n_data_train
+            for i_train in range(n_data_train):
+                kernel_exponential_ard.row_train_cache[i_train] = X_train.getrow(i_train).toarray()
+        k_unary = ard_outer_loop(n_data_train, n_data_test, variances)
+    else:
+        p = scipy.spatial.distance.cdist(X_train, X_test, metric='mahalanobis', VI=np.diag(1/variances))
+        k_unary = learn_predict.dtype_for_arrays(np.exp( (-1/2) * np.square(p)))
     return jitterize(k_unary, lhp, no_jitter)
 
 def jitterize(k_unary, lhp, no_jitter):
     if no_jitter:
         return k_unary
     else:
-        return k_unary + (np.exp(lhp["jitter"])) * np.eye(k_unary.shape[0])
+        tentative = k_unary + (np.exp(lhp["jitter"])) * np.eye(k_unary.shape[0])
+        return tentative
     
 def compute_lower_chol_k(kernel, lhp, X_train, n_labels):
     k_unary = kernel(X_train, X_train, lhp, no_jitter=False)
@@ -295,6 +329,24 @@ if __name__ == "__main__":
     import numpy
     import scipy.linalg
 
+    # test kernel_exponential_ard acceleration for sparse matrices
+    n_data_train=10
+    n_data_test=10
+    n_features=100
+    lhp = {'variances' : np.log(np.random.rand(n_features)), 'jitter' : np.log(1e-4)}
+
+    import scipy.sparse
+    x_train=scipy.sparse.coo_matrix(np.random.binomial(n=1, p=0.05, size=(n_data_train, n_features)))
+    x_test=scipy.sparse.coo_matrix(np.random.binomial(n=1, p=0.05, size=(n_data_test, n_features)))
+
+    import numpy.testing
+    #%lprun -f kernel_exponential_ard 
+    a = kernel_exponential_ard(x_train, x_test, lhp, no_jitter=True)
+    b = kernel_exponential_ard(x_train.toarray(), x_test.toarray(), lhp, no_jitter=True)
+    np.testing.assert_array_almost_equal(a,b)
+
+    # other tests
+
     numpy.random.seed(0)
     a = numpy.random.rand(10,10)
     u = numpy.linalg.cholesky(a.T.dot(a)).T
@@ -367,14 +419,14 @@ if __name__ == "__main__":
     np.testing.assert_almost_equal(
         L.solve_cholesky_lower(v),
         L.T_solve(L.solve(v)),
-        decimal=5)
+        decimal=4)
 
     # test .solve_chol_lower(matrix)
     # solve_chol(L, A) == I
     np.testing.assert_almost_equal(
         L.solve_cholesky_lower(A).expand(),
         gram_compact.identity(n, n_labels, 1.0).expand(),
-        decimal=6)
+        decimal=5)
     np.testing.assert_almost_equal(
         A.solve(v),
         np.linalg.solve(A.expand(), v),
@@ -412,7 +464,7 @@ if __name__ == "__main__":
     np.testing.assert_almost_equal(
         np.sum(np.log(np.diag(k_compact.expand()))),
         gram_compact(k_unary, k_binary_scalar, n_labels).diag_log_sum(),
-        decimal=6)
+        decimal=4)
     
     # test .dot(vector)
     np.testing.assert_almost_equal(
@@ -458,3 +510,29 @@ if __name__ == "__main__":
         kernel_exponential_ard(X_train, X_test, {'unary': np.log(1), 'variances' : np.log([7**2, 7**2])}, no_jitter=True)
         )
         
+"""
+# could be useful once
+
+# kernel computation using linear kernel (dot product) for sparse COO matrices
+
+n_data=10
+n_data_test=3
+n_features=100
+import scipy.sparse
+x_train=scipy.sparse.coo_matrix(np.random.randint(low=0, high=3, size=(n_data, n_features)))
+x_test=scipy.sparse.coo_matrix(np.random.randint(low=0, high=3, size=(n_data_test, n_features)))
+print(x_train.shape)
+#print(x_train)
+k = np.zeros((n_data, n_data_test))
+for coord in range(n_features):
+    v_train = x_train.T.getrow(coord)
+    v_test = x_test.T.getrow(coord)
+    for (i_data_train, i_train) in enumerate(v_train.indices):
+        for (i_data_test, i_test) in enumerate(v_test.indices):
+            k[i_train, i_test] += v_train.data[i_data_train] * v_test.data[i_data_test]
+
+print(k)
+print(np.dot(x_train.toarray(), x_test.T.toarray()))
+import sklearn.metrics.pairwise
+print(sklearn.metrics.pairwise.euclidean_distances(x_train, x_test, squared=True))
+"""
