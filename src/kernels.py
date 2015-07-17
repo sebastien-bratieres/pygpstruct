@@ -30,11 +30,12 @@ def kernel_exponential(X_train, X_test, lhp, no_jitter):
 import numba
 @numba.jit
 def ard_outer_loop(n_data_train, n_data_test, variances):
+    p = np.empty((n_data_train, n_data_test)) # 2% faster to allocate here, instead of pre-allocating in cache run (and using kernel_exponential_ard.p)
     for i_train in range(n_data_train):
         for i_test in range(n_data_test):
-            kernel_exponential_ard.p[i_train, i_test] = np.sum(ard_inner_func(kernel_exponential_ard.row_train_cache[i_train], kernel_exponential_ard.row_test_cache[i_test], variances))
-    kernel_exponential_ard.p = learn_predict.dtype_for_arrays(np.exp(kernel_exponential_ard.p))
-    return kernel_exponential_ard.p
+            p[i_train, i_test] = np.sum(ard_inner_func(kernel_exponential_ard.row_train_cache[i_train], kernel_exponential_ard.row_test_cache[i_test], variances))
+    
+    return learn_predict.dtype_for_arrays(np.exp(p)) # 2% faster not to use in-place exp
 
 @numba.vectorize(['float64(float64, float64, float64)', 'float32(float32, float32, float32)'])
 def ard_inner_func(a, b, v):
@@ -56,7 +57,6 @@ def kernel_exponential_ard(X_train, X_test, lhp, no_jitter):
         n_data_test = X_test.shape[0]
         
         if not hasattr(kernel_exponential_ard, 'row_test_cache'):
-            kernel_exponential_ard.p = np.empty((n_data_train, n_data_test))
             kernel_exponential_ard.row_test_cache = [None] * n_data_test # initialize empty list to memoize results of repeated X_test.getrow
             for i_test in range(n_data_test):
                 kernel_exponential_ard.row_test_cache[i_test] = X_test.getrow(i_test).toarray()  # stores result for later lookup 
@@ -74,8 +74,7 @@ def jitterize(k_unary, lhp, no_jitter):
     if no_jitter:
         return k_unary
     else:
-        tentative = k_unary + (np.exp(lhp["jitter"])) * np.eye(k_unary.shape[0])
-        return tentative
+        return k_unary + (np.exp(lhp["jitter"])) * np.eye(k_unary.shape[0])
     
 def compute_lower_chol_k(kernel, lhp, X_train, n_labels):
     k_unary = kernel(X_train, X_train, lhp, no_jitter=False)
