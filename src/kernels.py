@@ -29,11 +29,11 @@ def kernel_exponential(X_train, X_test, lhp, no_jitter):
 
 import numba
 @numba.jit
-def ard_outer_loop(n_data_train, n_data_test, variances):
+def ard_outer_loop(n_data_train, n_data_test, variances, cache):
     p = np.empty((n_data_train, n_data_test)) # 2% faster to allocate here, instead of pre-allocating in cache run (and using kernel_exponential_ard.p)
     for i_train in range(n_data_train):
         for i_test in range(n_data_test):
-            p[i_train, i_test] = np.sum(ard_inner_func(kernel_exponential_ard.row_train_cache[i_train], kernel_exponential_ard.row_test_cache[i_test], variances))
+            p[i_train, i_test] = np.sum(ard_inner_func(cache.row_train_cache[i_train], cache.row_test_cache[i_test], variances))
     
     return learn_predict.dtype_for_arrays(np.exp(p)) # 2% faster not to use in-place exp
 
@@ -56,19 +56,26 @@ def kernel_exponential_ard(X_train, X_test, lhp, no_jitter):
         n_data_train = X_train.shape[0]
         n_data_test = X_test.shape[0]
         
-        if not hasattr(kernel_exponential_ard, 'row_test_cache'):
-            kernel_exponential_ard.row_test_cache = [None] * n_data_test # initialize empty list to memoize results of repeated X_test.getrow
+        key = str(n_data_train) + str(n_data_test)
+        if key in kernel_exponential_ard.dict:
+            cache = kernel_exponential_ard.dict[key]
+        else:
+            class cache:
+                pass
+            kernel_exponential_ard.dict[key] = cache()
+            cache.row_test_cache = [None] * n_data_test # initialize empty list to memoize results of repeated X_test.getrow
             for i_test in range(n_data_test):
-                kernel_exponential_ard.row_test_cache[i_test] = X_test.getrow(i_test).toarray()  # stores result for later lookup 
+                cache.row_test_cache[i_test] = X_test.getrow(i_test).toarray()  # stores result for later lookup 
                 # TODO works only for segmentation, where it is feasible to do .toarray on feature vector!
-            kernel_exponential_ard.row_train_cache = [None] * n_data_train
+            cache.row_train_cache = [None] * n_data_train
             for i_train in range(n_data_train):
-                kernel_exponential_ard.row_train_cache[i_train] = X_train.getrow(i_train).toarray()
-        k_unary = ard_outer_loop(n_data_train, n_data_test, variances)
+                cache.row_train_cache[i_train] = X_train.getrow(i_train).toarray()
+        k_unary = ard_outer_loop(n_data_train, n_data_test, variances, cache)
     else:
         p = scipy.spatial.distance.cdist(X_train, X_test, metric='mahalanobis', VI=np.diag(1/variances))
         k_unary = learn_predict.dtype_for_arrays(np.exp( (-1/2) * np.square(p)))
     return jitterize(k_unary, lhp, no_jitter)
+kernel_exponential_ard.dict = {}
 
 def jitterize(k_unary, lhp, no_jitter):
     if no_jitter:
