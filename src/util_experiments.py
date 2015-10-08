@@ -134,17 +134,24 @@ def plot_data(data, label, ax):#, linestyle):
     iterations_per_log_line = 1
     t = np.arange(0,data.shape[0] * iterations_per_log_line, iterations_per_log_line)
     ax.plot(t, data.mean(axis=1), lw=1, label='%s' % label)#, linestyle=linestyle)#, color='black') 
+    ax.set_xticks(np.arange(0,50000+1,1000))
+    ax.xaxis.grid(True)
 
 def make_figure(data_col_list, file_pattern_list, bottom=None, top=None, max_display_length=1e6, save_pdf=False):
     for data_col in data_col_list: # new figure for each data type/ column
-        fig = plt.figure(figsize=(6,4))
+        fig = plt.figure(figsize=(20,4))
         ax = fig.add_subplot(111)
         
         #linestyles = ['-', '--', '-.', ':']
         #linestyle_index = 0
+        data_bottom = np.inf
+        data_top = -np.inf
         for (file_pattern_legend, file_pattern) in file_pattern_list: # new curve for each file group
             data = read_data(file_pattern, data_col, max_display_length)
             plot_data(data, file_pattern_legend, ax)#, linestyles[linestyle_index])
+            plotted_data = data.mean(axis=1)
+            data_bottom = min(plotted_data[(plotted_data.shape[0]/5):].min(), data_bottom)
+            data_top = max(plotted_data[(plotted_data.shape[0]/5):].max(), data_top)
             #print(data[-1,:].mean())
             #linestyle_index += 1
     
@@ -156,7 +163,15 @@ def make_figure(data_col_list, file_pattern_list, bottom=None, top=None, max_dis
                            1: 'current error rate on training set',
                            0: 'current LL train set'}
         ax.set_ylabel(data_col_legend[data_col])
-        ax.set_ylim(bottom=bottom, top=top)
+        if bottom == None:
+            ax.set_ylim(bottom=data_bottom)
+        else:
+            ax.set_ylim(bottom=bottom)
+        if top == None:
+            ax.set_ylim(top=data_top)
+        else:
+            ax.set_ylim(top=top)
+            
         ax.legend() #loc='upper right')
         
         if save_pdf:
