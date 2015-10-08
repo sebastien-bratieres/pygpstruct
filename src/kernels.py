@@ -11,11 +11,22 @@ def kernel_linear(X_train, X_test, lhp, no_jitter):
     k_unary = np.array(p, dtype=learn_predict.dtype_for_arrays)
     return jitterize(k_unary, lhp, no_jitter)
     
+def kernel_linear_ard(X_train, X_test, lhp, no_jitter):
+    if isinstance(X_train,scipy.sparse.coo_matrix) :
+        X_train_premult = X_train.multiply(scipy.sparse.coo_matrix(lhp['variances'])) # shapes: (n_data_train, n_features) * (n_features) which will be broadcast -> (n_data_train, n_features)
+        p = np.dot(X_train_premult,X_test.T)
+        p = p.toarray() # cos if using X_train sparse vector, p will be a csr_matrix -- incidentally in this case the resulting k_unary cannot be flattened, it will result in a (1,X) 2D matrix !
+    else:
+        X_train_premult = np.multiply(X_train, lhp['variances']) # shapes: (n_data_train, n_features) * (n_features) which will be broadcast -> (n_data_train, n_features)
+        p = np.dot(X_train_premult,X_test.T)        
+    k_unary = np.array(p, dtype=learn_predict.dtype_for_arrays)
+    return jitterize(k_unary, lhp, no_jitter)
+
 import sklearn.metrics.pairwise
 def kernel_exponential(X_train, X_test, lhp, no_jitter):
     """
     $k_\text{exponential}(\mathbf{x},\mathbf{x'}) = \exp({-\frac{1}{2 \ell ^2} \Vert \mathbf{x} - \mathbf{x'} \Vert ^2})$  
-    $k_\text{exponential ARD}(\mathbf{x},\mathbf{x'}) = \exp({-\frac{1}{2} \sum_i \frac{1}{\sigma_i ^2} ( \mathbf{x}_i - \mathbf{x'}_i ) ^2})$  
+    parameter 'length_scale' is log \ell
     """
 #    global dtype
     p = sklearn.metrics.pairwise.euclidean_distances(X_train, X_test, squared=True)
@@ -45,7 +56,8 @@ def ard_inner_func(a, b, v):
 import scipy.spatial.distance
 def kernel_exponential_ard(X_train, X_test, lhp, no_jitter):
     """
-    variance parameter = \sigma_i^2
+    $k_\text{exponential ARD}(\mathbf{x},\mathbf{x'}) = \exp({-\frac{1}{2} \sum_i \frac{1}{\sigma_i ^2} ( \mathbf{x}_i - \mathbf{x'}_i ) ^2})$  
+    parameter 'variance' is log(\sigma_i^2)_i
     cf unit test below for comparison with kernel_exponential_unary
     will attempt to convert sparse X_train, X_test to np.array, risking a memory error: use with caution with large arrays!
     sparse matrix optimization works on assumption that X_train, X_test don't change between calls
@@ -346,10 +358,30 @@ if __name__ == "__main__":
     x_test=scipy.sparse.coo_matrix(np.random.binomial(n=1, p=0.05, size=(n_data_test, n_features)))
 
     import numpy.testing
-    #%lprun -f kernel_exponential_ard 
-    a = kernel_exponential_ard(x_train, x_test, lhp, no_jitter=True)
-    b = kernel_exponential_ard(x_train.toarray(), x_test.toarray(), lhp, no_jitter=True)
-    np.testing.assert_array_almost_equal(a,b)
+    # kernel_exponential gives same result as kernel_exponential_ard with variances = log ones()
+    lhp['length_scale'] = np.log(1)
+    kernel_exponential_ard.dict = {}
+    np.testing.assert_array_almost_equal(
+        kernel_exponential_ard(x_train.toarray(), x_test.toarray(), {'variances': np.log(np.ones(n_features))}, no_jitter=True),
+        kernel_exponential(x_train, x_test, lhp, no_jitter=True)
+        )
+    # result of kernel_exponential_ard is the same for sparse and non-sparse
+    kernel_exponential_ard.dict = {}
+    np.testing.assert_array_almost_equal(
+        kernel_exponential_ard(x_train, x_test, lhp, no_jitter=True),
+        kernel_exponential_ard(x_train.toarray(), x_test.toarray(), lhp, no_jitter=True)
+        )    
+    
+    # result of kernel_linear_ard is the same for sparse and non-sparse
+    np.testing.assert_array_almost_equal(
+        kernel_linear_ard(x_train, x_test, lhp, no_jitter=True),
+        kernel_linear_ard(x_train.toarray(), x_test.toarray(), lhp, no_jitter=True)
+        )
+    # kernel_linear gives same result as kernel_linear_ard with variances = ones()
+    np.testing.assert_array_almost_equal(
+        kernel_linear_ard(x_train, x_test, {'variances': np.ones(n_features)}, no_jitter=True),
+        kernel_linear(x_train.toarray(), x_test.toarray(), lhp, no_jitter=True)
+        )
 
     # other tests
 
