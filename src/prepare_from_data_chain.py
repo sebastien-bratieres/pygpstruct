@@ -182,7 +182,7 @@ def loadData(dirName, n_labels, indexData, n_features_x):
                 dataset.unaries[n][t, yt] = f_index_max
                 f_index_max = f_index_max + 1
 
-    dataset.binaries = np.arange(f_index_max, f_index_max + n_labels**2).reshape((dataset.n_labels, dataset.n_labels), order='F')
+    dataset.binaries = np.arange(f_index_max, f_index_max + dataset.n_labels**2).reshape((dataset.n_labels, dataset.n_labels), order='F')
     
     return dataset
 

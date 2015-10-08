@@ -5,7 +5,7 @@ dataset object fields:
 - n_labels: number of possible labels for each atom in an object
 - object_size[n]: how many atoms (eg pixels or words) in object n ?
 - n_points : object_size.sum(), # atoms in the entire data set
-- X: X data (might be sparse matrix) in format (N, # input features), so each row represents X features for an input atom
+- X: X data (might be sparse matrix); X has shape (n_points, # input features), so each row represents X features for an input atom
 - Y: list of length N
 - Y[n]: array of shape corresponding to the type of data (2D array (grid_size, grid_size) for image, 1D (object_size[n]) for sentences)
 - unaries: list of size N
