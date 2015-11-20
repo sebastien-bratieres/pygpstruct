@@ -62,8 +62,8 @@ def run_experiments(lbview=None, prepare_from_data_type = 'synthetic', variable_
             n_mcmc_steps = completed_arguments_dict["n_samples"]
             import learn_predict
             path = completed_arguments_dict["result_prefix"]
-            history_ll = np.fromfile(os.path.join(path, 'results.bin'), dtype=learn_predict.dtype_for_arrays).reshape((n_mcmc_steps, 5))[:,0] # extract only LL history_hp
-            history_hp = np.fromfile(os.path.join(path, 'history_hp.bin'), dtype=learn_predict.dtype_for_arrays).reshape((n_mcmc_steps, -1))
+            history_ll = np.fromfile(os.path.join(path, 'results.bin'), dtype=util.dtype_for_arrays).reshape((n_mcmc_steps, 5))[:,0] # extract only LL history_hp
+            history_hp = np.fromfile(os.path.join(path, 'history_hp.bin'), dtype=util.dtype_for_arrays).reshape((n_mcmc_steps, -1))
             history_list.append((history_ll, history_hp))
             # once history retrieved, delete folder
             import shutil
@@ -109,7 +109,7 @@ def read_data(file_pattern, data_col, max_display_length):
     #print("file_pattern: " + file_pattern )
     files = glob.glob( file_pattern )
     if (files == []):
-        print("Error: no matching files !")
+        print("Error: no matching files for pattern %s !" % file_pattern)
     else:
         #print("matching files: " + str(files))
         pass

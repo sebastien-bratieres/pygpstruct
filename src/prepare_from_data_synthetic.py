@@ -1,3 +1,4 @@
+import util
 import numba
 @numba.jit
 def lse_numba(a):
@@ -110,7 +111,7 @@ def learn_predict_gpstruct_wrapper(
     prediction_verbosity=None,
     hp_sampling_thinning=1,
     hp_sampling_mode=None,
-    lhp_init={'jitter':np.log(1e-4), 'unary':np.log(1), 'binary':np.log(0.01), 'variances' : np.log(np.ones((10), dtype=learn_predict.dtype_for_arrays))},
+    lhp_init={'jitter':np.log(1e-4), 'unary':np.log(1), 'binary':np.log(0.01), 'variances' : np.log(np.ones((10), dtype=util.dtype_for_arrays))},
     kernel=kernels.kernel_exponential_ard,
     n_data = 100,
     synthetic_data_type = '5-class',

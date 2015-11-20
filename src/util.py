@@ -1,3 +1,6 @@
+import numpy as np
+dtype_for_arrays=np.float32
+
 def merge_dict(d1, d2):
     d1 = d1.copy()
     d1.update(d2)
@@ -70,7 +73,6 @@ class memoize_once(dict):
             result = self[h] = self.func(*args)
             return result
             
-import learn_predict
 def read_randoms(n=-1, type=None, should=None):
     """
     to intialize this function:
@@ -103,7 +105,7 @@ def read_randoms(n=-1, type=None, should=None):
         read_randoms.offset = read_randoms.offset+n
         if n == 1:
             print("read random number %g" % result)
-    return result.astype(learn_predict.dtype_for_arrays)
+    return result.astype(dtype_for_arrays)
 
 
 import time

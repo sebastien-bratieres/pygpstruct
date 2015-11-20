@@ -1,5 +1,5 @@
-from __future__ import division
-from __future__ import print_function
+#from __future__ import division
+#from __future__ import print_function
 import numpy as np
 import logging
 import time
@@ -15,15 +15,13 @@ import kernels
 import copy
 import gc
 
-dtype_for_arrays=np.float32
-
 # def default_set_lhp_target(lhp_, lhp_target):
     # new_lhp = copy.deepcopy(lhp_)
     # new_lhp["unary"] = lhp_target[0]
     # new_lhp["binary"] = lhp_target[1]
     # return new_lhp
 # def default_get_lhp_target(lhp_):
-    # return np.array([lhp_["unary"], lhp_["binary"]], dtype=learn_predict.dtype_for_arrays)
+    # return np.array([lhp_["unary"], lhp_["binary"]], dtype=util.dtype_for_arrays)
     
 def learn_predict_gpstruct( prepare_from_data,
                             result_prefix=None, 
@@ -140,8 +138,6 @@ def learn_predict_gpstruct( prepare_from_data,
     n_test = X_test.shape[0]
     #read_randoms(len(X_train.todense().flatten(order='F').T), should=np.squeeze(np.array(X_train.todense()).flatten(order='F').T), true_random_source=False) # DEBUG
     #read_randoms(len(X_test.todense().flatten(order='F').T), should=np.squeeze(np.array(X_test.todense()).flatten(order='F').T), true_random_source=False) # DEBUG
-    # prepare kernel matrix
-    logger.debug("prepare kernel matrices")
 
     logger.debug("start MCMC chain")
     if (prediction_verbosity != None):
@@ -161,7 +157,7 @@ def learn_predict_gpstruct( prepare_from_data,
         lhp = saved_state_dict['lhp']
         logger.info('hotstart from iteration %g, including stored random state. hotstart data = %s' % (mcmc_step, str(saved_state_dict)))
     else: # initialize state
-        current_f = np.zeros(n_labels * n_train + n_labels**2, dtype=dtype_for_arrays)
+        current_f = np.zeros(n_labels * n_train + n_labels**2, dtype=util.dtype_for_arrays)
         mcmc_step=0
         util.read_randoms.prng = np.random.RandomState(random_seed)
         if (lhp_update != None):
@@ -173,6 +169,7 @@ def learn_predict_gpstruct( prepare_from_data,
         else:
             lhp = lhp_init
         # no need to initialize other variables, since they will be computed during prediction, since we are starting from iteration 0 (for which we are sure prediction will happen)
+        logger.debug('no hotstart, initialized state')
 
     # we're now sure lhp has been defined or read off hotstart
     lower_chol_k_compact = kernels.compute_lower_chol_k(kernel, lhp, X_train, n_labels)
@@ -186,6 +183,7 @@ def learn_predict_gpstruct( prepare_from_data,
                 lhp['variances'] = variances
                 return lhp
             """                
+            logger.log(5, 'will recompute kernel')
             def Lfn(lhp_target):
                 lhp_ = set_lhp_target(lhp, lhp_target)
                 return kernels.compute_lower_chol_k(kernel, lhp_, X_train, n_labels)
@@ -239,6 +237,7 @@ def learn_predict_gpstruct( prepare_from_data,
             logger.debug('lhp update: %s' % str(lhp))
             lower_chol_k_compact = kernels.compute_lower_chol_k(kernel, lhp, X_train, n_labels)
 
+        logger.log(5, 'enter ESS')
         current_f, current_ll_train = ess_k_sampler.ESS(current_f, ll_train, lower_chol_k_compact, util.read_randoms) 
         #read_randoms(should=current_f, true_random_source=False)
         #current_ll_train = read_randoms(1, should=ll_train(current_f), true_random_source=False)
@@ -320,7 +319,7 @@ def learn_predict_gpstruct( prepare_from_data,
                      current_error, 
                      current_ll_test,
                      avg_error,
-                     avg_nlm], dtype=dtype_for_arrays)
+                     avg_nlm], dtype=util.dtype_for_arrays)
             last_results.tofile(results_file) # file format = row-wise array, shape #mcmc steps * 5 float32
         
         # save state in case we are interrupted

@@ -1,6 +1,7 @@
 import numpy as np
 import learn_predict
 import scipy
+import util
 
 import scipy.sparse.csr
 def kernel_linear(X_train, X_test, lhp, no_jitter):
@@ -8,7 +9,7 @@ def kernel_linear(X_train, X_test, lhp, no_jitter):
     p = np.dot(X_train,X_test.T)
     if isinstance(p, scipy.sparse.csr.csr_matrix):
         p = p.toarray() # cos if using X_train sparse vector, p will be a csr_matrix -- incidentally in this case the resulting k_unary cannot be flattened, it will result in a (1,X) 2D matrix !
-    k_unary = np.array(p, dtype=learn_predict.dtype_for_arrays)
+    k_unary = np.array(p, dtype=util.dtype_for_arrays)
     return jitterize(k_unary, lhp, no_jitter)
     
 def kernel_linear_ard(X_train, X_test, lhp, no_jitter):
@@ -19,7 +20,7 @@ def kernel_linear_ard(X_train, X_test, lhp, no_jitter):
     else:
         X_train_premult = np.multiply(X_train, lhp['variances']) # shapes: (n_data_train, n_features) * (n_features) which will be broadcast -> (n_data_train, n_features)
         p = np.dot(X_train_premult,X_test.T)        
-    k_unary = np.array(p, dtype=learn_predict.dtype_for_arrays)
+    k_unary = np.array(p, dtype=util.dtype_for_arrays)
     return jitterize(k_unary, lhp, no_jitter)
 
 import sklearn.metrics.pairwise
@@ -34,7 +35,7 @@ def kernel_exponential(X_train, X_test, lhp, no_jitter):
     # but works with Scipy sparse and Numpy dense arrays
     # I thought it would be equal to X_train.dot(X_train.T) + X_test.dot(X_test.T) - X_train.dot(X_test.T) - X_test.dot(X_train.T))
     # but it doesnt seem to
-    k_unary = learn_predict.dtype_for_arrays(np.exp( -(1/2) * 1/(np.exp(lhp["length_scale"])**2 ) * p))
+    k_unary = util.dtype_for_arrays(np.exp( -(1/2) * 1/(np.exp(lhp["length_scale"])**2 ) * p))
     return jitterize(k_unary, lhp, no_jitter)
 
 
@@ -46,7 +47,7 @@ def ard_outer_loop(n_data_train, n_data_test, variances, cache):
         for i_test in range(n_data_test):
             p[i_train, i_test] = np.sum(ard_inner_func(cache.row_train_cache[i_train], cache.row_test_cache[i_test], variances))
     
-    return learn_predict.dtype_for_arrays(np.exp(p)) # 2% faster not to use in-place exp
+    return util.dtype_for_arrays(np.exp(p)) # 2% faster not to use in-place exp
 
 @numba.vectorize(['float64(float64, float64, float64)', 'float32(float32, float32, float32)'])
 def ard_inner_func(a, b, v):
@@ -85,7 +86,7 @@ def kernel_exponential_ard(X_train, X_test, lhp, no_jitter):
         k_unary = ard_outer_loop(n_data_train, n_data_test, variances, cache)
     else:
         p = scipy.spatial.distance.cdist(X_train, X_test, metric='mahalanobis', VI=np.diag(1/variances))
-        k_unary = learn_predict.dtype_for_arrays(np.exp( (-1/2) * np.square(p)))
+        k_unary = util.dtype_for_arrays(np.exp( (-1/2) * np.square(p)))
     return jitterize(k_unary, lhp, no_jitter)
 kernel_exponential_ard.dict = {}
 
@@ -185,7 +186,7 @@ class gram_compact():
         """
         l = [self.gram_unary]*self.n_labels # [k_unary, k_unary, ... k_unary], with length n_label
         l.append(self.gram_binary_scalar * np.eye(self.n_labels **2))
-        return learn_predict.dtype_for_arrays(scipy.linalg.block_diag(*tuple(l)))
+        return util.dtype_for_arrays(scipy.linalg.block_diag(*tuple(l)))
     
     def T(self):
         return gram_compact(self.gram_unary.T, self.gram_binary_scalar, self.n_labels)
@@ -222,7 +223,7 @@ class gram_compact():
         Matlab x = K'\v
         """
         assert(v.shape[0] == (self.n_labels * self.n + self.n_labels ** 2))
-        result = np.zeros((self.n_labels * self.n + self.n_labels ** 2), dtype=learn_predict.dtype_for_arrays)
+        result = np.zeros((self.n_labels * self.n + self.n_labels ** 2), dtype=util.dtype_for_arrays)
         for label in range(self.n_labels):
             result[label * self.n : (label + 1) * self.n] = np.linalg.solve(self.gram_unary.T, v[label*self.n : (label+1)*self.n])
         result[self.n*self.n_labels:] = v[self.n*self.n_labels:] / self.gram_binary_scalar # binary section, should be length n_labels ** 2
@@ -237,7 +238,7 @@ class gram_compact():
         Matlab x = K\v
         """
         assert(v.shape[0] == (self.n_labels * self.n + self.n_labels ** 2))
-        result = np.zeros((self.n_labels * self.n + self.n_labels ** 2), dtype=learn_predict.dtype_for_arrays)
+        result = np.zeros((self.n_labels * self.n + self.n_labels ** 2), dtype=util.dtype_for_arrays)
         for label in range(self.n_labels):
             result[label * self.n : (label + 1) * self.n] = np.linalg.solve(self.gram_unary, v[label*self.n : (label+1)*self.n])
         result[self.n*self.n_labels:] = v[self.n*self.n_labels:] / self.gram_binary_scalar # binary section, should be length n_labels ** 2
@@ -252,7 +253,7 @@ class gram_compact():
         Matlab x = K\v
         """
         assert(v.shape[0] == (self.n_labels * self.n + self.n_labels ** 2))
-        result = np.zeros((self.n_labels * self.n + self.n_labels ** 2), dtype=learn_predict.dtype_for_arrays)
+        result = np.zeros((self.n_labels * self.n + self.n_labels ** 2), dtype=util.dtype_for_arrays)
         for label in range(self.n_labels):
             result[label * self.n : (label + 1) * self.n] = scipy.linalg.solve_triangular(self.gram_unary, v[label*self.n : (label+1)*self.n], lower=True, check_finite=False)
         result[self.n*self.n_labels:] = v[self.n*self.n_labels:] / self.gram_binary_scalar # binary section, should be length n_labels ** 2
@@ -279,7 +280,7 @@ class gram_compact():
                                 self.n_labels) # result is no longer lower triangular like self
         else:
             assert(v.shape[0] == (self.n_labels * self.n + self.n_labels ** 2))
-            result = np.zeros((self.n_labels * self.n + self.n_labels ** 2), dtype=learn_predict.dtype_for_arrays)
+            result = np.zeros((self.n_labels * self.n + self.n_labels ** 2), dtype=util.dtype_for_arrays)
             for label in range(self.n_labels):
                 result[label * self.n : (label + 1) * self.n] = gram_compact.solve_cholesky_lower_basic(self.gram_unary, v[label*self.n : (label+1)*self.n])
             result[self.n*self.n_labels:] = v[self.n*self.n_labels:] / (self.gram_binary_scalar ** 2) # binary section, should be length n_labels ** 2
@@ -289,7 +290,7 @@ class gram_compact():
         
     def dot_wrapper(self, v, A):
         assert(v.shape[0] == (self.n_labels * self.n + self.n_labels ** 2))
-        result = np.zeros((self.n_labels * self.n_star + self.n_labels ** 2), dtype=learn_predict.dtype_for_arrays)
+        result = np.zeros((self.n_labels * self.n_star + self.n_labels ** 2), dtype=util.dtype_for_arrays)
         for label in range(self.n_labels):
             result[label * self.n_star : (label + 1) * self.n_star] = np.dot(A, v[label*self.n : (label+1)*self.n])
             # maybe can rewrite this by properly shaping the values in f, and then doing a single dot()
@@ -397,9 +398,9 @@ if __name__ == "__main__":
     n_labels = 3
     n = 10
     n_star = 11
-    k_unary = learn_predict.dtype_for_arrays(np.random.rand(n_star, n)) # like kStarTKInv_unary
-    k_binary_scalar = learn_predict.dtype_for_arrays(np.random.rand()**2) # equivalent to lhp['binary']
-    v = learn_predict.dtype_for_arrays(np.random.rand(n * n_labels + n_labels **2))
+    k_unary = util.dtype_for_arrays(np.random.rand(n_star, n)) # like kStarTKInv_unary
+    k_binary_scalar = util.dtype_for_arrays(np.random.rand()**2) # equivalent to lhp['binary']
+    v = util.dtype_for_arrays(np.random.rand(n * n_labels + n_labels **2))
     k_compact = gram_compact(k_unary, k_binary_scalar, n_labels)
     
     # test constructor, .expand()
@@ -408,7 +409,7 @@ if __name__ == "__main__":
         gram_compact(k_unary, k_binary_scalar, n_labels).dot(v),
         decimal=5)
         
-    k_unary = learn_predict.dtype_for_arrays(np.random.rand(n, n)) # now square
+    k_unary = util.dtype_for_arrays(np.random.rand(n, n)) # now square
     k_unary = k_unary.T.dot(k_unary) # make it pos def
     k_compact = gram_compact(k_unary, k_binary_scalar, n_labels)
     # test .T_solve
@@ -421,7 +422,7 @@ if __name__ == "__main__":
         np.linalg.solve(k_compact.expand(), v),
         gram_compact(k_unary, k_binary_scalar, n_labels).solve(v),
         decimal=5)
-    k_unary_lower = np.tril(learn_predict.dtype_for_arrays(np.random.rand(n, n))) # now lower triangular
+    k_unary_lower = np.tril(util.dtype_for_arrays(np.random.rand(n, n))) # now lower triangular
     L = gram_compact(k_unary_lower, np.sqrt(k_binary_scalar), n_labels)
     A = gram_compact(k_unary_lower.dot(k_unary_lower.T), k_binary_scalar, n_labels)
     
