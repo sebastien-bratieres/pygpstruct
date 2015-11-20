@@ -38,7 +38,7 @@ def lse_numba_axis_1_tile(a,v,
     return result
 
 
-@numba.jit('double[:,::1](double[:,::1], double[:,::1], int32, int32)')
+@numba.njit() #'double[:,::1](double[:,::1], double[:,::1], int32, int32)')
 def forwards_algo_log_alpha(log_edge_pot, #'(t-1,t)', 
                   log_node_pot, # '(t, label)', 
                   T, 
@@ -66,7 +66,7 @@ def forwards_algo_log_alpha(log_edge_pot, #'(t-1,t)',
         log_alpha[t,:] -= lse_numba(log_alpha[t,:])
     return log_alpha
 
-@numba.jit('double[:,::1](double[:,::1], double[:,::1], int32, int32)')
+@numba.jit() #'double[:,::1](double[:,::1], double[:,::1], int32, int32)')
 def forwards_backwards_algo_log_gamma(log_edge_pot, log_node_pot, T, n_labels):
     """ to obtain the (smoothed) posterior marginals p(y_t = j | X_1:T) = gamma_t(j) """
 
@@ -98,7 +98,7 @@ def forwards_backwards_algo_log_gamma(log_edge_pot, log_node_pot, T, n_labels):
         log_gamma[:,c] -= temp
     return log_gamma #return gamma MLAPP (17.52), shape (t, label)
 
-@numba.jit('double[:,::1](double[:,::1], double[:,::1], int32, int32, double[:,::1], double[:,::1], double[:,::1], double[:,::1])')
+@numba.jit() #('double[:,::1](double[:,::1], double[:,::1], int32, int32, double[:,::1], double[:,::1], double[:,::1], double[:,::1])')
 def forwards_algo_log_Z(log_edge_pot, #'(t-1,t)', 
                   log_node_pot, # '(t, label)', 
                   T, 
