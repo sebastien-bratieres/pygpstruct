@@ -165,7 +165,7 @@ def compute_error_nlm(marginals, dataset):
         #print("marginals_n.shape: " + str(marginals_n.shape))
         ampm = np.argmax(marginals_n, axis = 1) # argmax posterior marginals
         #print("comparing %s to %s" % (str(ampm.shape), str(dataset.Y[n].shape)))
-        stats_per_object[n,0] = (ampm != dataset.Y[n]).sum()
+        stats_per_object[n,0] = (ampm != dataset.Y[n]).sum() # Hamming error computed here
         
         # from marginals, use dataset.Y[n] to select on axis "labels"
         avg_nlpm_object = np.empty_like(dataset.Y[n])

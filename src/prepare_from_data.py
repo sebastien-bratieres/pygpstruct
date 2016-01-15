@@ -26,7 +26,10 @@ def posterior_marginals(f, dataset, marginals_function):
         pm.append(posterior_marginals_single)
     return pm
 
-def average_marginals(marginals_list):
+def average_marginals(marginals_list): 
+    """
+    this function is passed around as variable so that learn_predict must not depend on prepare_from_data through import
+    """
     # Python 2 support: in py2, reduce is builtin
     try:
         from functools import reduce

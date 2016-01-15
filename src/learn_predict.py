@@ -33,7 +33,6 @@ def learn_predict_gpstruct( prepare_from_data,
                             hp_sampling_thinning=1, 
                             hp_sampling_mode=None,
                             lhp_gset = None, #(default_get_lhp_target, default_set_lhp_target),
-                            prior=1,
                             lhp_init={'unary': np.log(1), 'binary': np.log(0.01), 'jitter' : np.log(1e-4)},
                             lhp_update = None,
                             lhp_prior = lambda _lhp_target : 0 if (np.all(_lhp_target>np.log(1e-3)) and np.all(_lhp_target<np.log(1e2))) else np.NINF,
@@ -54,7 +53,6 @@ def learn_predict_gpstruct( prepare_from_data,
     # n_f_star: # f* samples given f (0 = MAP) - eg 2
     # hp_mode: 0 for no hp sampling, 1 for prior whitening, 2 for surrogate
     %   data/null aux
-    % prior: 1 for narrow, 2 for wide uniform prior
     lhp_update (deprecated) will update the default hyperparameters, to yield the (initial) log hyperparameters (which might get updated when hp sampling kicks in)
 
     """
@@ -299,15 +297,16 @@ def learn_predict_gpstruct( prepare_from_data,
                         "test set error | last f = %.5g -- " + 
                         "LL test | last f = %.5g -- " + 
                         "test set error (marginalized over f's)= %.5g -- " +
-                        "average per-atom negative log posterior marginals = %.5g -- " +
-                        "lhp = %s") % 
+                        "average per-atom negative log posterior marginals = %.5g -- " 
+#                        + "lhp = %s"
+                        ) % 
                         (mcmc_step, 
                          current_ll_train,
                          current_error, 
                          current_ll_test,
                          avg_error,
                          avg_nlm,
-                         str(lhp)
+#                         str(lhp)
                          )
                         )
             
@@ -339,6 +338,7 @@ def learn_predict_gpstruct( prepare_from_data,
         with open(result_prefix + 'history_hp.bin', 'ab') as history_hp_file:
             get_lhp_target(lhp).tofile(history_hp_file) # file format = row-wise array, shape #mcmc steps, len lhp_target
         if log_f:
+            np.savez(result_prefix + 'last_kernel.npz', lower_chol_k_unary=lower_chol_k_compact.gram_unary)
             with open(result_prefix + 'history_f.bin', 'ab') as history_f_file:
                 current_f.tofile(history_f_file) # file format = row-wise array, shape #mcmc steps, len f
     fh.close()

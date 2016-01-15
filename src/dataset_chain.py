@@ -1,24 +1,25 @@
 import numpy as np
+import os
 
 class dataset_chain:
 
-    def __init__(self, task, data_folder = None, sub_indices = None):
+    def __init__(self, task, data_folder, sub_indices = None):
         if (task == 'basenp'):
             n_features_x = 6438;
             n_labels = 3;
-            self.loadData(data_folder, n_labels, sub_indices, n_features_x);
+            self.load_data_nlp(data_folder, n_labels, sub_indices, n_features_x);
         elif (task == 'chunking'):
             n_features_x = 29764;
             n_labels = 14;
-            self.loadData(data_folder, n_labels, sub_indices, n_features_x);
+            self.load_data_nlp(data_folder, n_labels, sub_indices, n_features_x);
         elif (task == 'japanesene'):
             n_features_x = 102799;
             n_labels = 17;
-            self.loadData(data_folder, n_labels, sub_indices, n_features_x);
+            self.load_data_nlp(data_folder, n_labels, sub_indices, n_features_x);
         elif (task == 'segmentation'):
             n_features_x = 1386;
             n_labels = 2;
-            self.loadData(data_folder, n_labels, sub_indices, n_features_x);
+            self.load_data_nlp(data_folder, n_labels, sub_indices, n_features_x);
         elif (task == 'protein'):
             self.protein_jzhou(data_folder)
             if sub_indices is not None:
@@ -191,40 +192,42 @@ class dataset_chain:
 
         self.binaries = np.arange(f_index_max, f_index_max + self.n_labels**2).reshape((self.n_labels, self.n_labels), order='F')    
 
-    def loadData(self, dirName, n_labels, indexData, n_features_x):
+    def load_data_nlp(self, data_folder, n_labels, sub_indices, n_features_x):
+        if sub_indices is None:
+            raise Exception('Need sub_indices array.')
+        import scipy
         # .Y list of ndarrays
-        self.N = indexData.shape[0]
+        self.N = sub_indices.shape[0]
         self.n_labels = n_labels;
         self.Y = []
 
         # read data from sparse representation in file
         # -----
-        # to initialize a sparse matrix data_jzhou containing (rows = position in sequence, all seq concatenated, cols = feature, value=binaries)
-        # first create a large IJV array, with the I indices corresponding to rows in the vstack'ed data_jzhou
+        # to initialize a sparse matrix X containing (rows = position in sequence, all seq concatenated, cols = feature, value=binaries)
+        # first create a large IJV array, with the I indices corresponding to rows in the vstack'ed X
         # if I knew how to append to a COO sparse matrix, I could avoid all this, and just append rows as I go along
         ijv_array_list = []     # ijv_array_list is a list, with one ijv array per sentence
-        self.n_points = 0 # how many rows does data_jzhou have so far?
+        self.n_points = 0 # how many rows does X have so far?
         self.object_size = np.zeros((self.N), dtype=np.int16) # contains length of sentence n
         for n in range(self.N):
-            # set data_jzhou part
-            this_x = np.loadtxt(os.path.join(dirName, str(indexData[n]+1) + ".data_jzhou"), dtype=np.int32) # int32: some tasks have up to 102799 features (japanesene)
+            # set data_X part
+            this_x = np.loadtxt(os.path.join(data_folder, str(sub_indices[n]+1) + ".x"), dtype=np.int32) # int32: some tasks have up to 102799 features (japanesene)
             self.object_size[n] = this_x[-1,0] # the last element of the (Matlab, row-ordered) sparse format representation will contain an index into the last row
             this_x[:,[0,1]] -= 1 # from Matlab-indexing to Numpy-indexing: remove 1 from i and j indices
-            this_x[:,0] += self.n_points # correct all row indices so that they correspond to a vstack'ed data_jzhou
+            this_x[:,0] += self.n_points # correct all row indices so that they correspond to a vstack'ed X
             ijv_array_list.append(this_x)
             self.n_points += self.object_size[n]
 
             # set other parts
-            this_y = np.loadtxt(os.path.join(dirName, str(indexData[n]+1) + '.y'), dtype=np.int8) # labels start with 0 in data files
+            this_y = np.loadtxt(os.path.join(data_folder, str(sub_indices[n]+1) + '.y'), dtype=np.int8) # labels start with 0 in data files
             this_y[this_y < 0] = 0 # remove the three -1 labels found in task JapaneseNE for unknown reason
             self.Y.append(this_y) 
-            self.unaries.append(np.zeros((self.object_size[n], self.n_labels), dtype=np.int))
 
         assert(self.n_points == self.object_size.sum())
         # stack the ijv lists vertically, to create a complete ijv array
         ijv_array=np.vstack(tuple(ijv_array_list))
         # create a sparse matrix from the ijv array (coo_matrix expects input in order vij)
-        self.data_jzhou = scipy.sparse.coo_matrix((ijv_array[:,2],(ijv_array[:,0],ijv_array[:,1])), shape=(self.n_points, n_features_x))
+        self.X = scipy.sparse.coo_matrix((ijv_array[:,2],(ijv_array[:,0],ijv_array[:,1])), shape=(self.n_points, n_features_x))
 
         self.define_unaries_binaries()
 
