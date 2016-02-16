@@ -1,3 +1,6 @@
+import numpy as np
+dtype_for_arrays=np.float32
+
 # will work with dict
 # keeps only the last result in memory at any given time (useful for very big results)
 # will hash input using str() function (cos it should work on small dicts)
@@ -25,7 +28,6 @@ def read_randoms(n=-1, type=None, should=None, true_random_source=True):
     - a PRNG
     - a file where a sequence of such PRN is stored (to allow reusing the same random sequence between Matlab and Python, in my case)
     """
-    global dtype
     if true_random_source:
         if type != None:
             if type=='u':
@@ -46,7 +48,7 @@ def read_randoms(n=-1, type=None, should=None, true_random_source=True):
                 raise e
             
         read_randoms.offset = read_randoms.offset+n
-    return learn_predict.dtype_for_arrays(result)
+    return dtype_for_arrays(result)
 
 
 import time

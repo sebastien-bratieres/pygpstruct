@@ -1,32 +1,29 @@
 import numpy as np
-import learn_predict
+import util
 import scipy
 
 import scipy.sparse.csr
 def kernel_linear_unary(X_train, X_test, lhp, no_noise):
-    global dtype
     p = np.dot(X_train,X_test.T)
     if isinstance(p, scipy.sparse.csr.csr_matrix):
         p = p.toarray() # cos if using X_train sparse vector, p will be a csr_matrix -- incidentally in this case the resulting k_unary cannot be flattened, it will result in a (1,X) 2D matrix !
-    k_unary = np.exp(lhp["unary"]) * np.array(p, dtype=learn_predict.dtype_for_arrays)
+    k_unary = np.exp(lhp["unary"]) * np.array(p, dtype=util.dtype_for_arrays)
     return noisify(k_unary, lhp, no_noise)
     
 import sklearn.metrics.pairwise
 def kernel_exponential_unary(X_train, X_test, lhp, no_noise):
-    global dtype
     p = sklearn.metrics.pairwise.euclidean_distances(X_train, X_test, squared=True)
     # sames as scipy.spatial.distance.cdist(X_train,X_test, 'sqeuclidean')
     # but works with Scipy sparse and Numpy dense arrays
     # I thought it would be equal to X_train.dot(X_train.T) + X_test.dot(X_test.T) - X_train.dot(X_test.T) - X_test.dot(X_train.T))
     # but it doesnt seem to
-    k_unary = learn_predict.dtype_for_arrays(np.exp(lhp["unary"]) * np.exp( -(1/2) * 1/(np.exp(lhp["length_scale"])**2 ) * p))
+    k_unary = util.dtype_for_arrays(np.exp(lhp["unary"]) * np.exp( -(1/2) * 1/(np.exp(lhp["length_scale"])**2 ) * p))
     return noisify(k_unary, lhp, no_noise)
             
 import scipy.spatial.distance
 def kernel_exponential_ard(X_train, X_test, lhp, no_noise):
-    global dtype
     p = scipy.spatial.distance.cdist(X_train, X_test, metric='mahalanobis', VI=np.diag(1/np.exp(lhp['variances'])))
-    k_unary = learn_predict.dtype_for_arrays(np.exp(lhp["unary"]) * np.exp( (-1/2) * np.square(p)))
+    k_unary = util.dtype_for_arrays(np.exp(lhp["unary"]) * np.exp( (-1/2) * np.square(p)))
     return noisify(k_unary, lhp, no_noise)
 
 def noisify(k_unary, lhp, no_noise):
@@ -75,7 +72,7 @@ class gram_compact():
         
     def T_solve(self, v):
         assert(v.shape[0] == (self.n_labels * self.n + self.n_labels ** 2))
-        result = np.zeros((self.n_labels * self.n + self.n_labels ** 2), dtype=learn_predict.dtype_for_arrays)
+        result = np.zeros((self.n_labels * self.n + self.n_labels ** 2), dtype=util.dtype_for_arrays)
         for label in range(self.n_labels):
             result[label * self.n : (label + 1) * self.n] = np.linalg.solve(self.gram_unary.T, v[label*self.n : (label+1)*self.n])
         result[self.n*self.n_labels:] = v[self.n*self.n_labels:] / self.gram_binary_scalar # binary section, should be length n_labels ** 2
@@ -83,7 +80,7 @@ class gram_compact():
     
     def dot_wrapper(self, v, A):
         assert(v.shape[0] == (self.n_labels * self.n + self.n_labels ** 2))
-        result = np.zeros((self.n_labels * self.n_star + self.n_labels ** 2), dtype=learn_predict.dtype_for_arrays)
+        result = np.zeros((self.n_labels * self.n_star + self.n_labels ** 2), dtype=util.dtype_for_arrays)
         for label in range(self.n_labels):
             result[label * self.n_star : (label + 1) * self.n_star] = np.dot(A, v[label*self.n : (label+1)*self.n])
             # maybe can rewrite this by properly shaping the values in f, and then doing a single dot()
@@ -115,15 +112,15 @@ if __name__ == "__main__":
     v = np.random.rand(n * n_labels + n_labels **2)
     
     np.testing.assert_array_equal(
-        learn_predict.dtype_for_arrays(expand_kernel(k_unary, k_binary_scalar * np.eye(n_labels **2), n_labels).dot(v)),
+        util.dtype_for_arrays(expand_kernel(k_unary, k_binary_scalar * np.eye(n_labels **2), n_labels).dot(v)),
         gram_compact(k_unary, k_binary_scalar, n_labels).dot(v))
         
     k_unary = np.random.rand(n, n) # now square
     np.testing.assert_array_equal(
-        learn_predict.dtype_for_arrays(np.linalg.solve(expand_kernel(k_unary, k_binary_scalar * np.eye(n_labels **2), n_labels).T, v)),
+        util.dtype_for_arrays(np.linalg.solve(expand_kernel(k_unary, k_binary_scalar * np.eye(n_labels **2), n_labels).T, v)),
         gram_compact(k_unary, k_binary_scalar, n_labels).T_solve(v))
     np.testing.assert_array_equal(
-        learn_predict.dtype_for_arrays(expand_kernel(k_unary, k_binary_scalar * np.eye(n_labels **2), n_labels).T.dot(v)),
+        util.dtype_for_arrays(expand_kernel(k_unary, k_binary_scalar * np.eye(n_labels **2), n_labels).T.dot(v)),
         gram_compact(k_unary, k_binary_scalar, n_labels).T_dot(v)) # test works because this k_unary is not symetric
     np.testing.assert_approx_equal(
         np.sum(np.log(np.diag(expand_kernel(k_unary, k_binary_scalar * np.eye(n_labels **2), n_labels)))),

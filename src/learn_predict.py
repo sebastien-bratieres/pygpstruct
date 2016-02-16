@@ -10,11 +10,8 @@ import numpy.testing
 import pickle
 import glob
 import slice_sample_hyperparameters
-import util
 import kernels
 
-dtype_for_arrays=np.float32
-    
 def learn_predict_gpstruct( prepare_from_data,
                             result_prefix=None, 
                             console_log=True,
@@ -46,7 +43,6 @@ def learn_predict_gpstruct( prepare_from_data,
     default hyperparameters:     lhp = {'unary': np.log(1), 'binary': np.log(0.01), 'length_scale': np.log(8), 'noise' : np.log(1e-4)}
 
     """
-    global dtype
     function_args = locals() # store just args passed to function, so as to log them later on
     
     ## test for hotstart
@@ -91,6 +87,7 @@ def learn_predict_gpstruct( prepare_from_data,
     if (stop_check == None):
         stop_check = lambda : None # equivalent to pass
     results = []
+    import util
     util.read_randoms.offset=0 #DEBUG
     #read_randoms.file = np.loadtxt('/tmp/sb358/ess_randoms.txt') #DEBUG
 
@@ -138,7 +135,7 @@ def learn_predict_gpstruct( prepare_from_data,
         avg_nlm = saved_state_dict['avg_nlm']
         logger.info('hotstart from iteration %g, including stored random state' % mcmc_step)
     else: # initialize state
-        current_f = np.zeros(n_labels * TT_train + n_labels**2, dtype=dtype_for_arrays)
+        current_f = np.zeros(n_labels * TT_train + n_labels**2, dtype=util.dtype_for_arrays)
         mcmc_step=0
         util.read_randoms.prng = np.random.RandomState(random_seed)
         # no need to initialize other variables, since they will be computed during prediction, since we are starting from iteration 0 (for which we are sure prediction will happen)
@@ -283,7 +280,7 @@ def learn_predict_gpstruct( prepare_from_data,
                      current_error, 
                      current_ll_test,
                      avg_error,
-                     avg_nlm], dtype=dtype_for_arrays)
+                     avg_nlm], dtype=util.dtype_for_arrays)
             last_results.tofile(results_file) # file format = row-wise array, shape #mcmc steps * 5 float32
         
         # save state in case we are interrupted
