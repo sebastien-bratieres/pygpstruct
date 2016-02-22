@@ -42,6 +42,7 @@ def learn_predict_gpstruct_wrapper(
     lhp_gset = (default_get_lhp_target, default_set_lhp_target),
     lhp_prior = lambda _lhp_target : 0 if (np.all(_lhp_target>np.log(1e-3)) and np.all(_lhp_target<np.log(1e2))) else np.NINF,
     hp_sampling_thinning=1, 
+    hp_sampling_burnin=0,
     hp_sampling_mode=None,
     kernel=kernels.kernel_linear,
     random_seed=0,
@@ -160,6 +161,7 @@ def read_marginals(marginals_file, dataset):
     return result
     
 def compute_error_nlm(marginals, dataset):
+    """ returns 1*2 array: [error, neg log posterior marg] """
     stats_per_object = np.empty((dataset.N,2)) # first col for error rate, second col for neg log marg
     for n, marginals_n in enumerate(marginals):
         #print("marginals_n.shape: " + str(marginals_n.shape))
@@ -168,7 +170,7 @@ def compute_error_nlm(marginals, dataset):
         stats_per_object[n,0] = (ampm != dataset.Y[n]).sum() # Hamming error computed here
         
         # from marginals, use dataset.Y[n] to select on axis "labels"
-        avg_nlpm_object = np.empty_like(dataset.Y[n])
+        avg_nlpm_object = np.empty_like(dataset.Y[n], dtype=float)
         T = dataset.Y[n].shape[0]
         for t in range(T):
             avg_nlpm_object[t] = -np.log(marginals_n[t, dataset.Y[n][t]])
