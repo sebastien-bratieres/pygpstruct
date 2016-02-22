@@ -195,7 +195,7 @@ class dataset_chain:
     def load_data_nlp(self, data_folder, n_labels, sub_indices, n_features_x):
         if sub_indices is None:
             raise Exception('Need sub_indices array.')
-        import scipy
+        import scipy.sparse
         # .Y list of ndarrays
         self.N = sub_indices.shape[0]
         self.n_labels = n_labels;
