@@ -117,7 +117,7 @@ def read_data(file_pattern, data_col, max_display_length):
         if data_col == None:  # matlab
             data_from_file = np.loadtxt(file_name)
         else: # python
-            if (file_pattern.endswith(".txt")):
+            if (file_pattern.endswith(".txt")): # old-style results, stored in text file
                 data_from_file = np.loadtxt(file_name)[:,data_col]
             else:
                 with open(file_name, 'rb') as f:
@@ -174,7 +174,7 @@ def make_figure(data_col_list, file_pattern_list, bottom=None, top=None, max_dis
         else:
             axarr[data_col_id, 0].set_ylim(top=top)
             
-        axarr[data_col_id, 0].legend() #loc='upper right')
+        axarr[data_col_id, 0].legend(framealpha=0.5) #loc='upper right')
         
     if pdf_filename:
         import matplotlib

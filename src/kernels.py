@@ -1,5 +1,4 @@
 import numpy as np
-import learn_predict
 import scipy
 import util
 
@@ -197,7 +196,7 @@ class gram_compact():
         """
         try:
             return gram_compact(np.linalg.cholesky(self.gram_unary).T, np.sqrt(self.gram_binary_scalar), self.n_labels)
-        except np.linalg.LinAlgError as  e:
+        except np.linalg.LinAlgError as  e: # matrix is probably singular
             import matplotlib.pyplot as plt
             plt.matshow(self.gram_unary)
             print(self.gram_unary)
@@ -267,9 +266,11 @@ class gram_compact():
         
     def solve_cholesky_lower(self, v):
         """
-        solve linear equations from the Cholesky factorization: given equation A X = L L^T X = B, return L^-T L^-1 B
-        "self" is assumed to be lower triangular
-        Solve A*X = B for X, where A is square, symmetric, positive definite. The input to the function is L the lower Cholesky decomposition of A and the matrix B.
+        Solve A*X = B for X, where A is square, symmetric, positive definite. The input to the function is L, the lower Cholesky decomposition of A (ie A = L L^T), and the matrix B.
+        Therefore, for self=L, this function returns (L L^T)^-1 B = L^-T L^-1 B
+        "self" is assumed to be the lower triangular L
+        v must be either of type gram_compact, or a vector.
+        
         L = A.cholesky()
         X = L.solve_cholesky_lower(v) == A.solve(v) == L.T_solve(L.solve(v))
         """

@@ -15,7 +15,7 @@ dataset object fields:
 
 def posterior_marginals(f, dataset, marginals_function):
     """
-    def posterior_marginals(f : "learnt latent variables, shape column", 
+    def posterior_marginals(f : "learnt log potentials, shape column", 
                         dataset : "dataset object") -> "list of (normalized) posterior marginals, length N":
     """
     pm = []
