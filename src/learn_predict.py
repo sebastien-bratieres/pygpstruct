@@ -75,14 +75,9 @@ def learn_predict_gpstruct( prepare_from_data,
             hotstart=True # no safety net prevents hotstarting with different parameters. Could do: store parameters dict, check at hotstart that it is identical. Hard to do: just have an "hotstart this" feature which works based on a results folder; implies re-obtain things like dataset, kernel matrices.
     else:
         # make results dir
-        # mkdir result_prefix in case it doesnt exist, from http://stackoverflow.com/questions/16029871/how-to-run-os-mkdir-with-p-option-in-python second answer updated !
         hotstart=False
-        try:
-            os.makedirs(os.path.split(result_prefix)[0])
-        except OSError as err:
-            if err.errno!=17:
-                raise
-
+        os.makedirs(os.path.split(result_prefix)[0], exist_ok=True)
+        
     ## logging initialization
     # logging tree blog post http://rhodesmill.org/brandon/2012/logging_tree/
     logger = logging.getLogger('pyGPstruct') # reuse logger if existing
@@ -283,7 +278,6 @@ def learn_predict_gpstruct( prepare_from_data,
                 write_marginals(marginals_f, marginals_file)
 
             # read all past marginals from disk
-            marginals_read = np.array([0]) # init to non-empty list
             with open(result_prefix + "marginals.bin", 'rb') as marginals_file:
                 all_marginals = read_marginals(marginals_file)
 
