@@ -4,7 +4,6 @@ import util
 
 import scipy.sparse.csr
 def kernel_linear(X_train, X_test, lhp, no_jitter):
-#    global dtype
     p = np.dot(X_train,X_test.T)
     if isinstance(p, scipy.sparse.csr.csr_matrix):
         p = p.toarray() # cos if using X_train sparse vector, p will be a csr_matrix -- incidentally in this case the resulting k_unary cannot be flattened, it will result in a (1,X) 2D matrix !
@@ -28,7 +27,6 @@ def kernel_exponential(X_train, X_test, lhp, no_jitter):
     $k_\text{exponential}(\mathbf{x},\mathbf{x'}) = \exp({-\frac{1}{2 \ell ^2} \Vert \mathbf{x} - \mathbf{x'} \Vert ^2})$  
     parameter 'length_scale' is log \ell
     """
-#    global dtype
     p = sklearn.metrics.pairwise.euclidean_distances(X_train, X_test, squared=True)
     # sames as scipy.spatial.distance.cdist(X_train,X_test, 'sqeuclidean')
     # but works with Scipy sparse and Numpy dense arrays
@@ -41,7 +39,7 @@ def kernel_exponential(X_train, X_test, lhp, no_jitter):
 import numba
 @numba.jit
 def ard_outer_loop(n_data_train, n_data_test, variances, cache):
-    p = np.empty((n_data_train, n_data_test)) # 2% faster to allocate here, instead of pre-allocating in cache run (and using kernel_exponential_ard.p)
+    p = np.empty((n_data_train, n_data_test), dtype=util.dtype_for_arrays) # 2% faster to allocate here, instead of pre-allocating in cache run (and using kernel_exponential_ard.p)
     for i_train in range(n_data_train):
         for i_test in range(n_data_test):
             p[i_train, i_test] = np.sum(ard_inner_func(cache.row_train_cache[i_train], cache.row_test_cache[i_test], variances))
@@ -93,7 +91,7 @@ def jitterize(k_unary, lhp, no_jitter):
     if no_jitter:
         return k_unary
     else:
-        return k_unary + (np.exp(lhp["jitter"])) * np.eye(k_unary.shape[0])
+        return k_unary + (np.exp(lhp["jitter"])) * np.eye(k_unary.shape[0], dtype=util.dtype_for_arrays)
     
 def compute_lower_chol_k(kernel, lhp, X_train, n_labels):
     k_unary = kernel(X_train, X_train, lhp, no_jitter=False)
@@ -140,7 +138,7 @@ def compute_kernels_from_data_AFAC(kernel, lhp, X_train, X_test, n_labels):
     if (lhp.has_key["unary"] and lhp.has_key["binary"]):
         lower_chol_k_compact = gram_compact(np.linalg.cholesky(np.exp(lhp["unary"]) * k_unary), np.sqrt(np.exp(lhp["binary"])), n_labels)
     elif (lhp.has_key["alpha"] and lhp.has_key["lambda"]):
-        lower_chol_k_compact = gram_compact(np.linalg.cholesky(np.exp(lhp["alpha"]) * k_unary), np.sqrt(np.exp(lhp["alpha"]) + ljp["gamma"]), n_labels)
+        lower_chol_k_compact = gram_compact(np.linalg.cholesky(np.exp(lhp["alpha"]) * k_unary), np.sqrt(np.exp(lhp["alpha"]) + lhp["gamma"]), n_labels)
     else:
         raise("Unknown parameterization for kernel")
     
