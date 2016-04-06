@@ -106,10 +106,7 @@ def prepare_from_data_chain(task, data_indices_train, data_indices_test, data_fo
         else:
             raise Exception("You have set native_implementation=True, but there has been an ImportError on import chain_forwards_backwards_native, and so I can't find the native implementation.")
     else:
-        log_likelihood_function_numba.log_alpha = np.empty((max_T, data_train.n_labels))
-        log_likelihood_function_numba.log_kappa = np.empty((max_T))    
-        log_likelihood_function_numba.temp_array_1 = np.empty((data_train.n_labels))
-        log_likelihood_function_numba.temp_array_2 = np.empty((data_train.n_labels))
+        chain_forwards_backwards_logsumexp.preassign(max_T, data_train.n_labels)
         return (
             lambda f : prepare_from_data.log_likelihood_dataset(f, data_train, log_likelihood_function_numba, logger, ll_fun_wants_log_domain=True),
             lambda f : prepare_from_data.posterior_marginals(f, data_test, marginals_function), 
@@ -130,21 +127,24 @@ def log_likelihood_function_numba(log_node_pot, log_edge_pot, dataset_Y_n, objec
         # edges: select edge factors with tuples (y_{t-1}, y_{t}). Use as the first index, y_{t-1}, obtained by cutting off dataset_Y_n before the last position; and as the second index, y{t}, obtained by shifting dataset_Y_n to the left (ie [1:]).
         
         # "denominator": log_Z obtained from forwards pass
-        log_Z = chain_forwards_backwards_logsumexp.forwards_algo_log_Z(log_edge_pot,
+        log_Z = chain_forwards_backwards_logsumexp.compute_log_Z(log_edge_pot,
                                      log_node_pot,
                                      object_size,
                                      n_labels,
-                                     log_likelihood_function_numba.log_alpha, # pre-assigned memory space to speed up likelihood computation
-                                     log_likelihood_function_numba.log_kappa,
-                                     log_likelihood_function_numba.temp_array_1,
-                                     log_likelihood_function_numba.temp_array_2)
+                                     chain_forwards_backwards_logsumexp.log_alpha, # pre-assigned memory space to speed up likelihood computation
+                                     chain_forwards_backwards_logsumexp.temp_array_1,
+                                     chain_forwards_backwards_logsumexp.temp_array_2)
         return (log_pot - log_Z)
 
 def marginals_function(log_node_pot, log_edge_pot, object_size, n_labels):
     """
     marginals returned have shape (object_size, n_labels)
     """
-    return np.exp(chain_forwards_backwards_logsumexp.forwards_backwards_algo_log_gamma(log_edge_pot, log_node_pot, object_size, n_labels))
+    return np.exp(chain_forwards_backwards_logsumexp.compute_log_gamma(log_edge_pot, log_node_pot, object_size, n_labels, 
+                                     chain_forwards_backwards_logsumexp.log_alpha, # pre-assigned memory space to speed up likelihood computation
+                                     chain_forwards_backwards_logsumexp.log_beta,
+                                     chain_forwards_backwards_logsumexp.temp_array_1,
+                                     chain_forwards_backwards_logsumexp.temp_array_2))
 
 def write_marginals(marginals_f, marginals_file):
     #print(marginals_f)
@@ -165,6 +165,8 @@ def compute_error_nlm(marginals, dataset):
     stats_per_object = np.empty((dataset.N,2)) # first col for error rate, second col for neg log marg
     for n, marginals_n in enumerate(marginals):
         #print("marginals_n.shape: " + str(marginals_n.shape))
+        #print("dataset.y[n]: " + str(dataset.Y[n]))
+        #print("dataset.object_size[n]: " + str(dataset.object_size[n]))
         ampm = np.argmax(marginals_n, axis = 1) # argmax posterior marginals
         #print("comparing %s to %s" % (str(ampm.shape), str(dataset.Y[n].shape)))
         stats_per_object[n,0] = (ampm != dataset.Y[n]).sum() # Hamming error computed here
