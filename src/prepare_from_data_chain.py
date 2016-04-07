@@ -140,11 +140,12 @@ def marginals_function(log_node_pot, log_edge_pot, object_size, n_labels):
     """
     marginals returned have shape (object_size, n_labels)
     """
-    return np.exp(chain_forwards_backwards_logsumexp.compute_log_gamma(log_edge_pot, log_node_pot, object_size, n_labels, 
+    return np.exp(chain_forwards_backwards_logsumexp.compute_log_gamma_normalized(log_edge_pot, log_node_pot, object_size, n_labels, 
                                      chain_forwards_backwards_logsumexp.log_alpha, # pre-assigned memory space to speed up likelihood computation
                                      chain_forwards_backwards_logsumexp.log_beta,
                                      chain_forwards_backwards_logsumexp.temp_array_1,
-                                     chain_forwards_backwards_logsumexp.temp_array_2))
+                                     chain_forwards_backwards_logsumexp.temp_array_2,
+                                     chain_forwards_backwards_logsumexp.temp_array_3))
 
 def write_marginals(marginals_f, marginals_file):
     #print(marginals_f)
