@@ -1,3 +1,4 @@
+import chain_forwards_backwards_logsumexp as fwdbwd
 
 def sufficient_statistics(data_train, Y):
     """ input: Y contains labellings for all y^(n)
@@ -12,30 +13,31 @@ def sufficient_statistics(data_train, Y):
             grad_f[data_train.binaries[Y[n][t-1], Y[n][t]]] += 1
     return grad_f
 
-import prepare_from_data
-import prepare_from_data_chain
-def sample_given_f(data_train, f):
-    """ input: log potentials f
-    returns a sample Y over the dataset such that for all n, $y^{(n)} \sim p( \cdot | x^{(n)}, f)"""
-    marginals = prepare_from_data.posterior_marginals(f, data_train, prepare_from_data_chain.marginals_function)
-    # can't use posterior_marginals_test: we want marginals over the training data ! this implies we need to carry around data_train
-    Y = []
-    for (n, marginals_n) in enumerate(marginals):
-        y_n = np.empty(data_train.object_size[n], dtype=np.int16)
-        for t in range(data_train.object_size[n]):
-            y_n[t] = np.random.choice(data_train.n_labels, p=marginals_n[t,:])
-        Y.append(y_n)
-    return Y
+#def expected_statistics(data_train, f):
+#    """ computes the expected count of average statistics, ie the term d log Z/df. this is one of the two terms of
+#    d log lik (D_train) / df"""
+#    n_samples = 50 # computing expectation over fixed number of samples -- surely there are cleverer schemes
+#    accumulated_statistics = np.zeros_like(f, dtype=util.dtype_for_arrays)
+#    for n in range(n_samples):
+#        accumulated_statistics += sufficient_statistics(data_train, sample_given_f(data_train, f))
+#    return accumulated_statistics/n_samples
 
-def expected_statistics(data_train, f):
-    """ computes the expected count of average statistics, ie the term d log Z/df. this is one of the two terms of
-    d log lik (D_train) / df"""
-    n_samples = 50 # computing expectation over fixed number of samples -- surely there are cleverer schemes
-    accumulated_statistics = np.zeros_like(f, dtype=util.dtype_for_arrays)
-    for n in range(n_samples):
-        accumulated_statistics += sufficient_statistics(data_train, sample_given_f(data_train, f))
-    return accumulated_statistics/n_samples
-
+def expected_statistics(dataset, f):
+    grad_f_contribution = np.zeros_like(f, dtype=util.dtype_for_arrays)
+    log_edge_pot = f[dataset.binaries]
+    for n in range(dataset.N):
+        log_node_pot = f[dataset.unaries[n]]
+        grad_f_contribution[dataset.unaries[n]] += np.exp(
+            fwdbwd.compute_log_gamma_normalized(log_edge_pot, log_node_pot, dataset.object_size[n], dataset.n_labels, 
+                                                                                   fwdbwd.log_alpha, fwdbwd.log_beta, fwdbwd.temp_array_1, fwdbwd.temp_array_2, fwdbwd.temp_array_3)
+            )
+        log_ksi = np.exp(
+            fwdbwd.compute_log_ksi_normalized(log_edge_pot, log_node_pot, dataset.object_size[n], dataset.n_labels, 
+                                                                                   fwdbwd.log_alpha, fwdbwd.log_beta, fwdbwd.temp_array_1, fwdbwd.temp_array_2)
+            )
+        grad_f_contribution[dataset.binaries] += log_ksi.sum(axis=0) # collapsing along t dimension, result is shape (n_labels, n_labels): expectation for each binary factor over entire sequence
+    return grad_f_contribution
+        
 def grad_likelihood(data_train, f):
     return sufficient_statistics(data_train, data_train.Y) - expected_statistics(data_train, f)
 
@@ -111,6 +113,7 @@ def run(config):
     data_train = dataset_chain.dataset_chain(task = config['task'], data_folder=common_arguments['data_folder'], sub_indices=common_arguments['data_indices_train'])
     data_test = dataset_chain.dataset_chain(task = config['task'], data_folder=common_arguments['data_folder'], sub_indices=common_arguments['data_indices_test'])
     # will need to use inside prepare_from_data.posterior_marginals
+    fwdbwd.preassign(max_T = data_train.object_size.max(), n_labels = data_train.n_labels)
 
     os.makedirs(config['result_prefix'], exist_ok=True)
     logger=obtain_logger(config)
@@ -140,7 +143,7 @@ def run(config):
     grad_L = lambda x : grad(x,L, data_train, logger)
 
     # how to choose x0 ?
-    if True:
+    if False:
         # read off stored experiment results
         with open('/xvdb/results-2015-06-23/pygpstruct_50k.task=%(task)s.hp_sampling_mode=None.parameterization=ub.fold=%(fold)g.hp_sampling_thinning=1000/state.pickle'
                   % config, 'rb') as file:
@@ -206,6 +209,17 @@ if __name__ == "__main__":
                                                            **common_arguments
                                                )
 
+    # TEST
+    # suppose all f's corresponding to binary factors are equal, say 0.
+    # then these two values should be equal:
+    # - #edges in data
+    # - expectation of #all edges over dataset
+    f = np.zeros(data_train.n_labels * data_train.X.shape[0] + data_train.n_labels **2, dtype=util.dtype_for_arrays)
+
+    fwdbwd.preassign(max_T = data_train.object_size.max(), n_labels = data_train.n_labels)
+    np.testing.assert_almost_equal((data_train.n_points - data_train.N),
+                                   expected_statistics(data_train, f)[data_train.binaries].sum())
+
     # prepare K, L=cholK, and then func and grad for the minimizer
     #kernel = kernels.kernel_exponential_ard
     #lhp = {'unary': np.log(1), 'binary': np.log(1), 'jitter': np.log(1e-4), 'variances' : +1 * np.ones((n_features))}
@@ -219,18 +233,10 @@ if __name__ == "__main__":
     x0 = L.dot(u.astype(util.dtype_for_arrays))
     # END TEST setup, copied from run() ------------
 
-    # TEST
-    # suppose all f's corresponding to binary factors are equal, say 0.
-    # then these two values should be equal:
-    # - #edges in data
-    # - expectation of #all edges over dataset
-    np.testing.assert_almost_equal((data_train.n_points - data_train.N),
-                                   expected_statistics(data_train, f)[-9:].sum())
-
     # TEST: manual gradient check in one direction
     # I can do a manual check in one single direction, to have an idea of orders of magnitude: take a step in direction eps * np.ones(), and compare:
 
-    eps = 1e-7
+    eps = 1e-12
     np.testing.assert_almost_equal(func_L(x0 + eps) - func_L(x0), # first terms of Taylor expansion
                                    grad_L(x0).dot(eps*np.ones_like(x0)), # gradient value
                                    decimal=3)
