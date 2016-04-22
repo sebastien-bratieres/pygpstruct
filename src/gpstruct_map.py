@@ -54,10 +54,10 @@ import gc
 def func(x, L, ll_train, logger):
     x = util.dtype_for_arrays(x) # sometimes x will come in float64
     log_prior_val = util.dtype_for_arrays(-1/2) * x.dot(compute_Kinv_f(x, L)) # log p(f) = -1/2 f^T K^-1 f + const (which we disregard)
-    log_posterior_val = -ll_train(x) - log_prior_val
-    logger.debug("objective function value %.5g" % log_posterior_val)
+    log_posterior_val = log_prior_val + ll_train(x)
+    logger.debug("objective function value %.5g" % (- log_posterior_val))
     gc.collect()
-    return log_posterior_val
+    return -log_posterior_val
 
 def grad(x, L, data_train, logger):
     x = util.dtype_for_arrays(x) # sometimes x will come in float64
@@ -113,7 +113,7 @@ def run(config):
     data_train = dataset_chain.dataset_chain(task = config['task'], data_folder=common_arguments['data_folder'], sub_indices=common_arguments['data_indices_train'])
     data_test = dataset_chain.dataset_chain(task = config['task'], data_folder=common_arguments['data_folder'], sub_indices=common_arguments['data_indices_test'])
     # will need to use inside prepare_from_data.posterior_marginals
-    fwdbwd.preassign(max_T = data_train.object_size.max(), n_labels = data_train.n_labels)
+    fwdbwd.preassign(max_T = max(data_train.object_size.max(), data_test.object_size.max()), n_labels = data_train.n_labels)
 
     os.makedirs(config['result_prefix'], exist_ok=True)
     logger=obtain_logger(config)
