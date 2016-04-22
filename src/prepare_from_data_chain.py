@@ -90,7 +90,9 @@ def prepare_from_data_chain(task, data_indices_train, data_indices_test, data_fo
     
     # pre-assigning for speed so that there's no memory assingment in the most inner loop of the likelihood computation
     max_T = np.max([data_train.object_size.max(), data_test.object_size.max()])
+    chain_forwards_backwards_logsumexp.preassign(max_T, data_train.n_labels)
     
+    # NB native implementation might be used for log-lik computation, but marginals will always come from Numba implementation
     if native_implementation:
         if native_implementation_found:
             chain_forwards_backwards_native.init_kappa(max_T)
@@ -106,7 +108,6 @@ def prepare_from_data_chain(task, data_indices_train, data_indices_test, data_fo
         else:
             raise Exception("You have set native_implementation=True, but there has been an ImportError on import chain_forwards_backwards_native, and so I can't find the native implementation.")
     else:
-        chain_forwards_backwards_logsumexp.preassign(max_T, data_train.n_labels)
         return (
             lambda f : prepare_from_data.log_likelihood_dataset(f, data_train, log_likelihood_function_numba, logger, ll_fun_wants_log_domain=True),
             lambda f : prepare_from_data.posterior_marginals(f, data_test, marginals_function), 
