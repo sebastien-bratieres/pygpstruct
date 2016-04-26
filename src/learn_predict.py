@@ -109,7 +109,6 @@ def learn_predict_gpstruct( prepare_from_data,
     if (stop_check == None):
         stop_check = lambda : None # equivalent to pass
     util.read_randoms.offset=0 #DEBUG
-    #read_randoms.file = np.loadtxt('/tmp/sb358/ess_randoms.txt') #DEBUG
     (get_lhp_target, set_lhp_target) = lhp_gset # for readability
 
 
@@ -180,11 +179,11 @@ def learn_predict_gpstruct( prepare_from_data,
             def Lfn(lhp_target):
                 lhp_ = set_lhp_target(lhp, lhp_target)
                 return kernels.compute_lower_chol_k(kernel, lhp_, X_train, n_labels)
-            Lfn = util.memoize_once(Lfn)
+            #Lfn = util.memoize_once(Lfn)
             def Kfn(lhp_target):
                 L = Lfn(lhp_target)
                 return kernels.gram_compact(gram_unary = L.gram_unary.dot(L.gram_unary.T), gram_binary_scalar = L.gram_binary_scalar ** 2, n_labels = L.n_labels)
-            Kfn = util.memoize_once(Kfn)
+            #Kfn = util.memoize_once(Kfn)
             # lhp_target are the "interesting" log hyperparameters, eg the variances
             if (hp_sampling_mode == 'slice sample theta'):
                 (lhp_target, current_f, current_ll_train) = slice_sample_hyperparameters.update_theta_simple(
