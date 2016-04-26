@@ -12,11 +12,11 @@ def kernel_linear(X_train, X_test, lhp, no_jitter):
     
 def kernel_linear_ard(X_train, X_test, lhp, no_jitter):
     if isinstance(X_train,scipy.sparse.coo_matrix) :
-        X_train_premult = X_train.multiply(scipy.sparse.coo_matrix(lhp['variances'])) # shapes: (n_data_train, n_features) * (n_features) which will be broadcast -> (n_data_train, n_features)
+        X_train_premult = X_train.multiply(scipy.sparse.coo_matrix(np.exp(lhp['variances']))) # shapes: (n_data_train, n_features) * (n_features) which will be broadcast -> (n_data_train, n_features)
         p = np.dot(X_train_premult,X_test.T)
         p = p.toarray() # cos if using X_train sparse vector, p will be a csr_matrix -- incidentally in this case the resulting k_unary cannot be flattened, it will result in a (1,X) 2D matrix !
     else:
-        X_train_premult = np.multiply(X_train, lhp['variances']) # shapes: (n_data_train, n_features) * (n_features) which will be broadcast -> (n_data_train, n_features)
+        X_train_premult = np.multiply(X_train, np.exp(lhp['variances'])) # shapes: (n_data_train, n_features) * (n_features) which will be broadcast -> (n_data_train, n_features)
         p = np.dot(X_train_premult,X_test.T)        
     k_unary = np.array(p, dtype=util.dtype_for_arrays)
     return jitterize(k_unary, lhp, no_jitter)
