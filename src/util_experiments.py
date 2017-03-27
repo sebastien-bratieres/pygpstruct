@@ -6,6 +6,7 @@ import numpy as np
 import os
 import prepare_from_data_synthetic
 import prepare_from_data_chain
+import util
 
 def run_experiment_sequential(completed_arguments_dict, prepare_from_data_type):
     if prepare_from_data_type == 'synthetic':
@@ -27,7 +28,7 @@ def run_experiment_parallel(completed_arguments_dict, prepare_from_data_type):
 import time
     
 # TODO should always return a JSON file+ stdout recap of call jobs launched, to coordinate hashes with expt parameters
-def run_experiments(lbview=None, prepare_from_data_type = 'synthetic', variable_arguments_list = [], common_arguments = {}, result_prefix = '/tmp/pygpstruct_',require_output=False):
+def run_experiments(lbview=None, prepare_from_data_type = 'synthetic', variable_arguments_list = [], common_arguments = {}, result_prefix = '/tmp/pygpstruct_',require_output=False, map_async=True):
 
     default_common_arguments = {'n_samples' : 2001}
     default_common_arguments.update(common_arguments)
@@ -44,12 +45,16 @@ def run_experiments(lbview=None, prepare_from_data_type = 'synthetic', variable_
 
         completed_arguments_list.append(completed_arguments_dict)
     if lbview != None:
-        # need to pass all args in lambda cos otherwise "ValueError: sorry, can't pickle functions with closures"
-        asr = lbview.map_async(lambda completed_arguments_dict, prepare_from_data_type=prepare_from_data_type: 
-            run_experiment_parallel(completed_arguments_dict, prepare_from_data_type),
-                                       completed_arguments_list)
-        return asr # list(zip(asr, completed_arguments_list))
-    else:
+        if map_async:
+            # need to pass all args in lambda cos otherwise "ValueError: sorry, can't pickle functions with closures"
+            asr = lbview.map_async(lambda completed_arguments_dict, prepare_from_data_type=prepare_from_data_type: 
+                run_experiment_parallel(completed_arguments_dict, prepare_from_data_type),
+                                           completed_arguments_list)
+            return asr # list(zip(asr, completed_arguments_list))
+        else:
+            sr = lbview.map_sync(lambda completed_arguments_dict, prepare_from_data_type=prepare_from_data_type: 
+                run_experiment_parallel(completed_arguments_dict, prepare_from_data_type), completed_arguments_list)
+            # no "return" now, cos may need require_output below    else:
         for completed_arguments_dict in completed_arguments_list:
             run_experiment_sequential(completed_arguments_dict, prepare_from_data_type) 
         print(completed_arguments_list)
@@ -71,7 +76,7 @@ def run_experiments(lbview=None, prepare_from_data_type = 'synthetic', variable_
 
         return history_list, default_common_arguments, variable_arguments_list
 
-def plot_experiments(history_list, default_common_arguments, variable_arguments_list, y_min=None):
+def plot_experiments(history_list, default_common_arguments, variable_arguments_list, y_min=None, savefig_file=None):
         plt.figure(0, figsize=(20,7))
         ax = plt.plot(np.array([history_ll for (history_ll, __) in history_list]).T)
         # TODO remove result_prefix and kernel from legend?
@@ -95,7 +100,8 @@ def plot_experiments(history_list, default_common_arguments, variable_arguments_
         plt.ylabel('training data log-likelihood')
         plt.xlabel('MCMC step')
         plt.ylim(bottom=y_min)
-
+        if savefig_file != None:
+            plt.savefig(savefig_file, bbox_inches='tight')
 
 # code to plot figures from file results.txt
 
@@ -133,50 +139,56 @@ def read_data(file_pattern, data_col, max_display_length):
 def plot_data(data, label, ax):#, linestyle):
     iterations_per_log_line = 1
     t = np.arange(0,data.shape[0] * iterations_per_log_line, iterations_per_log_line)
-    ax.plot(t, data.mean(axis=1), lw=1, label='%s' % label)#, linestyle=linestyle)#, color='black') 
+    ax.plot(t, data, lw=1, label='%s' % label)#, linestyle=linestyle)#, color='black') 
     #ax.set_xticks(np.arange(0,50000+1,1000))
     ax.xaxis.grid(True)
 
-def make_figure(data_col_list, file_pattern_list, bottom=None, top=None, max_display_length=1e6, pdf_filename=False, title=False):
+def make_figure(data_col_list, file_pattern_list, bottom=None, top=None, max_display_length=1e6, pdf_filename=False, title=False, print_final_results=False):
     fig, axarr = plt.subplots(len(data_col_list), 1, squeeze=False)
-    fig.set_size_inches(20, len(data_col_list)*3)
+    fig.set_size_inches(20, len(data_col_list)*4)
     if title:
         fig.suptitle(title, fontsize=20)
+    final_results = np.zeros((len(file_pattern_list), len(data_col_list)))  # create array to contain, for each experimental configuration, the metrics at the final MCMC iteration (typically HE and ANLPM)
     for (data_col_id, data_col) in enumerate(data_col_list): # new figure for each data type/ column
        
         #linestyles = ['-', '--', '-.', ':']
         #linestyle_index = 0
         data_bottom = np.inf
         data_top = -np.inf
-        for (file_pattern_legend, file_pattern) in file_pattern_list: # new curve for each file group
-            data = read_data(file_pattern, data_col, max_display_length)
-            plot_data(data, file_pattern_legend, axarr[data_col_id, 0])#, linestyles[linestyle_index])
-            plotted_data = data.mean(axis=1)
-            data_bottom = min(plotted_data[(plotted_data.shape[0]/5):].min(), data_bottom)
-            data_top = max(plotted_data[(plotted_data.shape[0]/5):].max(), data_top)
+        for (file_pattern_id, (file_pattern_legend, file_pattern)) in enumerate(file_pattern_list): # new curve for each file group
+            plotted_data = read_data(file_pattern, data_col, max_display_length)
+            plotted_data = plotted_data.mean(axis=1)
+            plot_data(plotted_data, file_pattern_legend, axarr[data_col_id, 0])#, linestyles[linestyle_index])
+            final_results[file_pattern_id,data_col_id] = plotted_data[-1]
+            data_bottom = min(plotted_data[(plotted_data.shape[0]//5):].min(), data_bottom)
+            data_top = max(plotted_data[(plotted_data.shape[0]//5):].max(), data_top)
             #print(data[-1,:].mean())
             #linestyle_index += 1
     
         axarr[data_col_id, 0].set_xlabel('MCMC iterations')
         data_col_legend = {None: 'Matlab error rate', 
                            4: 'per-atom average negative log marginal',
-                           3: 'test set error rate, marginalized over f''s', 
+                           3: 'error rate, test set, marginalized over f''s', 
                            2: 'current LL test set',
-                           1: 'current error rate on test set',
+                           1: 'error rate, test set, last f',
                            0: 'current LL train set'}
         axarr[data_col_id, 0].set_ylabel(data_col_legend[data_col])
         if bottom == None:
-            axarr[data_col_id, 0].set_ylim(bottom=data_bottom)
+            axarr[data_col_id, 0].set_ylim(bottom=(data_bottom - 0.05*np.abs(data_top-data_bottom)))
         else:
             axarr[data_col_id, 0].set_ylim(bottom=bottom)
         if top == None:
-            axarr[data_col_id, 0].set_ylim(top=data_top)
+            axarr[data_col_id, 0].set_ylim(top=(data_top + 0.05* np.abs(data_top-data_bottom)))
         else:
             axarr[data_col_id, 0].set_ylim(top=top)
             
-        axarr[data_col_id, 0].legend(framealpha=0.5) #loc='upper right')
+        axarr[data_col_id, 0].legend(framealpha=0.8, loc='upper left')
         
     if pdf_filename:
         import matplotlib
         matplotlib.rcParams['pdf.fonttype'] = 42 # to avoid PDF Type 3 fonts in resulting plots, cf http://www.phyletica.com/?p=308
         fig.savefig(pdf_filename,bbox_inches='tight');
+    if print_final_results:
+        for (file_pattern_id, (file_pattern_legend, file_pattern)) in enumerate(file_pattern_list):
+            print("%-60s  " % file_pattern_legend + "  ".join(["%6.3f" % f for f in final_results[file_pattern_id, :]]))
+        
