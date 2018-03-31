@@ -5,7 +5,7 @@ dataset object fields:
 - n_labels: number of possible labels for each atom in an object
 - object_size[n]: how many atoms (eg pixels or words) in object n ?
 - n_points : object_size.sum(), # atoms in the entire data set
-- X: X data (might be sparse matrix) in format (N, # input features), so each row represents X features for an input atom
+- X: X data (might be sparse matrix); X has shape (n_points, # input features), so each row represents X features for an input atom
 - Y: list of length N
 - Y[n]: array of shape corresponding to the type of data (2D array (grid_size, grid_size) for image, 1D (object_size[n]) for sentences)
 - unaries: list of size N
@@ -15,7 +15,7 @@ dataset object fields:
 
 def posterior_marginals(f, dataset, marginals_function):
     """
-    def posterior_marginals(f : "learnt latent variables, shape column", 
+    def posterior_marginals(f : "learnt log potentials, shape column", 
                         dataset : "dataset object") -> "list of (normalized) posterior marginals, length N":
     """
     pm = []
@@ -26,7 +26,10 @@ def posterior_marginals(f, dataset, marginals_function):
         pm.append(posterior_marginals_single)
     return pm
 
-def average_marginals(marginals_list):
+def average_marginals(marginals_list): 
+    """
+    this function is passed around as variable so that learn_predict must not depend on prepare_from_data through import
+    """
     # Python 2 support: in py2, reduce is builtin
     try:
         from functools import reduce
@@ -51,15 +54,24 @@ def add_marginals(x,y):
     return x+y
     
 import numba
+import warnings
 #@numba.jit           
-def log_likelihood_dataset(f, dataset, log_likelihood_datapoint, ll_fun_wants_log_domain):
+def log_likelihood_dataset(f, dataset, log_likelihood_datapoint, logger, ll_fun_wants_log_domain):
     """
     f : log-domain potentials
     ll_fun_wants_log_domain : whether or not the log-likelihood function needs f to be in log-domain (this is false only for the native chain LL implementation)
     """
     #print("f.dtype : %s" % f.dtype)
+    #import hashlib
+    #print("before " + str(int(hashlib.sha1(f.view(np.uint8)).hexdigest(), 16)))
     if not ll_fun_wants_log_domain:
-        f = np.exp(f) # changing semantics of f instead of inserting if's on edge_pot=... and node_pot=...
+        try:
+            with warnings.catch_warnings():
+                warnings.filterwarnings('error')
+                f = np.exp(f) # changing semantics of f instead of inserting if's on edge_pot=... and node_pot=...
+        except RuntimeWarning as rtw:
+            logger.debug("RuntimeWarning: " + str(rtw))
+    #print("after " + str(int(hashlib.sha1(f.view(np.uint8)).hexdigest(), 16)))
     ll = 0
     edge_pot = f[dataset.binaries]
 #    print(dataset.binaries)
@@ -67,10 +79,6 @@ def log_likelihood_dataset(f, dataset, log_likelihood_datapoint, ll_fun_wants_lo
     #assert(log_edge_pot.shape == (dataset.n_labels, dataset.n_labels))
     for n in range(dataset.N):
         node_pot = f[dataset.unaries[n]]
-#        print(dataset.unaries[n][:5,:5,0])
-#        print(log_node_pot[:5,:5,0])
-        #assert(log_node_pot.shape == (dataset.object_size, dataset.object_size, dataset.n_labels))
-        
         ll_datapoint = log_likelihood_datapoint(node_pot, edge_pot, dataset.Y[n], dataset.object_size[n], dataset.n_labels) 
         # if (ll_datapoint >0):
             # info_string = ""

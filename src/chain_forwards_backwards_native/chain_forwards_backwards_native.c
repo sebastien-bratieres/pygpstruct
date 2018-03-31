@@ -47,7 +47,7 @@ static PyMethodDef module_functions[] = {
      },
     {"init_kappa", init_kappa, METH_VARARGS,
      "init_kappa(T_max)\n\n"
-     "creates an array for kappa to be used at every subsequent log-likelihood computation."  
+     "runtime optimization: avoid re-allocating memory repeatedly. This function creates an array for kappa to be used at every subsequent log-likelihood computation."  
      },
      {"log_likelihood", log_likelihood, METH_VARARGS,
      "log_likelihood(edge_pot, node_pot, y)\n\n"
@@ -97,39 +97,41 @@ static double log_z_impl(PyArrayObject *edge_pot, PyArrayObject *node_pot, PyArr
 
     npy_intp t;
 	for (t=0; t<T; t++) { // row of node_pot
-		char *p_node_pot_t = node_pot->data + t*node_pot->strides[0]; // SB why char* ? // pointer to a row inside node_pot
+		char *p_node_pot_t = node_pot->data + t*node_pot->strides[0]; // SB why char* ? // node_pot[t,:]
         kappa[t] = 0;
         
         npy_intp l;
 		for (l=0; l<n_labels; l++) { // col of node_pot
-			npy_float32 *node_pot_t_l = (npy_float32*)(p_node_pot_t + l*node_pot->strides[1]);
+			npy_float32 *node_pot_t_l = (npy_float32*)(p_node_pot_t + l*node_pot->strides[1]); // node_pot[t,l]
             // if t>0 premultiply node_pot_t_l as necessary
             if (t>0) {
-                char *p_node_pot_tm1 = node_pot->data + (t - 1)*node_pot->strides[0];
-                char *p_edge_pot_col_l = edge_pot->data + l*edge_pot->strides[1]; // taking from edge_pot.T !
+                char *p_node_pot_tm1 = node_pot->data + (t - 1)*node_pot->strides[0]; // node_pot[t-1,:]
+                char *p_edge_pot_col_l = edge_pot->data + l*edge_pot->strides[1]; // edge_pot[:,l]
                 npy_float32 a = 0.0;
                 int j;
                 for (j=0; j<n_labels; j++) {
                     a += (*(npy_float32*)(p_edge_pot_col_l + j*edge_pot->strides[0]))
-                        * (*(npy_float32*)(p_node_pot_tm1 + j*node_pot->strides[1]));// edge_pot.T[l,j] * node_pot[t-1,j]
+                        * (*(npy_float32*)(p_node_pot_tm1 + j*node_pot->strides[1]));// edge_pot[j,l] * node_pot[t-1,j]
 //                    printf("edge_pot.T[l,j]: %.2f   ", *(npy_float32*)(p_edge_pot_col_l + j*edge_pot->strides[0]));
 //                    printf("node_pot[t-1,j]: %.2f   ", *(npy_float32*)(p_node_pot_tm1 + j*node_pot->strides[1]));
-                }
+                } //(for j) now a == edge_pot[:,l] * node_pot[t-1,:]
                 *node_pot_t_l *=  a;
                 //printf("a_l: %.10f   ", a);
 
-            }
+            } // if t>0
 			//npy_float32 node_pot_t_l = *(npy_float32*)(p_node_pot_t + l*node_pot->strides[1]);
             kappa[t] += *node_pot_t_l;
-		}
+            // for t=0 this is node_pot[t,l]
+            // for t>0 this is node_pot[t,l] * (edge_pot[:,l] * node_pot[t-1,:]
+		} // (for l) so kappa[t] == sum_l the above
 		for (l=0; l<n_labels; l++) { // col of node_pot
 			npy_float32 *node_pot_t_l = (npy_float32*)(p_node_pot_t + l*node_pot->strides[1]);
-            *node_pot_t_l /= kappa[t];
-		}
+            *node_pot_t_l /= kappa[t]; // will influence node_pot[t-1,:] in next iteration of t
+		} // (for l) 
         log_z += log(kappa[t]); // this line could go into separate loop, after all of the previous has been done
         //printf("log_z: %.10f\n", log_z);
 
-	}
+	} // for t
     return log_z;
 }
 

@@ -2,29 +2,23 @@ import numpy as np
 import numpy.testing
 import scipy.io
 import learn_predict
+import util
 
 def ESS(f, logli, lower_chol_K_compact, read_randoms):
-    nu =  lower_chol_K_compact.dot(read_randoms(lower_chol_K_compact.n * lower_chol_K_compact.n_labels + lower_chol_K_compact.n_labels ** 2, 'n')) # sample from K
+    nu =  lower_chol_K_compact.dot(read_randoms(len(f), 'n')) # sample from K
     u = read_randoms(1, 'u')
-#    u = np.random.rand(1)
-#    print("initial logli evaluation")
-    log_y = numpy.log(u) + logli(f)
-    read_randoms(1, should=log_y)
-    read_randoms(f.shape[0], should=f)
+    # initial log lik evaluation
+    log_y = np.log(u) + logli(f)
     v = read_randoms(1, 'u')
-    theta = v*2*numpy.pi
-#    theta = np.random.rand(1)*2*numpy.pi
-    theta_min = theta - 2*numpy.pi
+    theta = v*2*np.pi
+    theta_min = theta - 2*np.pi
     theta_max = theta
-    while True:
+    
+    stopwatch = util.stop_check(delay = 300) 
+    while not stopwatch.evaluate():
         fp = f*np.cos(theta)+nu*np.sin(theta)
-        #print("f : %s" % f.dtype)
-        #print("nu : %s" % nu.dtype)
-
-#        print("log li evaluation in loop")
+        # log lik evaluation in loop
         cur_log_like = logli(fp)
-        read_randoms(1, should=cur_log_like )
-        read_randoms(fp.shape[0], should=fp)
         if (cur_log_like > log_y):
             break
         if (theta < 0):
@@ -33,5 +27,7 @@ def ESS(f, logli, lower_chol_K_compact, read_randoms):
             theta_max = theta
         v = read_randoms(1, 'u')
         theta = v*(theta_max - theta_min) + theta_min
-#        theta = np.random.rand(1)*(theta_max - theta_min) + theta_min
-    return (fp, cur_log_like)
+    if not stopwatch.evaluate(): # normal termination condition
+        return (fp, cur_log_like)
+    else: # time out termination
+        return ESS(f, logli, lower_chol_K_compact, read_randoms) # in this case, start ESS procedure from scratch, ie recurse (we are confident this is not going to happen very often, if at all, hence the recursion will terminate)
